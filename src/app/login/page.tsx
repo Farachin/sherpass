@@ -12,9 +12,11 @@ async function login(formData: FormData) {
 
   const supabase = await createClient();
   
-  // WICHTIG: Hier hart auf localhost gestellt für den Test, damit der Redirect sicher klappt.
-  // Später für Vercel: `${process.env.NEXT_PUBLIC_SUPABASE_URL}/auth/callback` nutzen.
-  const redirectTo = "http://localhost:3000/auth/callback";
+  // HIER IST DIE ÄNDERUNG:
+  const isProduction = process.env.NODE_ENV === "production";
+  const redirectTo = isProduction
+    ? "https://sherpass.vercel.app/auth/callback"
+    : "http://localhost:3000/auth/callback";
 
   const { error } = await supabase.auth.signInWithOtp({
     email,
