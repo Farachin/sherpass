@@ -1,6 +1,8 @@
 "use client";
 
+import { createClient } from "@/utils/supabase/client";
 import React, { useState, useEffect } from "react";
+import Link from "next/link";
 import QRCode from "react-qr-code";
 import {
   Search,
@@ -14,18 +16,20 @@ import {
   X,
 } from "lucide-react";
 import { analyzeContentRisk } from "./lib/compliance";
-import { supabase } from "./lib/supabase";
+import { signOut } from "./auth/actions";
 
 type Trip = {
   id: number;
   origin: string;
   destination: string;
   date: string;
-  weight: number;
+  capacity_kg: number;
   sherpa_name: string;
 };
 
 export default function Home() {
+  const supabase = createClient();
+
   const [manifestInput, setManifestInput] = useState("");
   const [weight, setWeight] = useState("");
   const [value, setValue] = useState("");
@@ -41,7 +45,7 @@ export default function Home() {
   const [showWaybill, setShowWaybill] = useState(false);
   const [qrSuccess, setQrSuccess] = useState(false);
 
-  // Trips
+  // Trips & User
   const [trips, setTrips] = useState<Trip[]>([]);
   const [loadingTrips, setLoadingTrips] = useState(false);
   const [origin, setOrigin] = useState("");
@@ -52,8 +56,12 @@ export default function Home() {
   const [tripError, setTripError] = useState<string | null>(null);
   const [dateStr, setDateStr] = useState("");
   const [shipmentId, setShipmentId] = useState<string | null>(null);
+  
+  // User State
+  const [userEmail, setUserEmail] = useState<string | null>(null);
+  const [checkingUser, setCheckingUser] = useState(true);
 
-  // Live-Check
+  // 1. Live-Check Manifest
   useEffect(() => {
     if (manifestInput.length > 2) {
       // @ts-ignore
@@ -65,7 +73,12 @@ export default function Home() {
     }
   }, [manifestInput]);
 
-  // QR Simulation
+  // 2. Datum setzen
+  useEffect(() => {
+    setDateStr(new Date().toLocaleDateString("de-DE"));
+  }, []);
+
+  // 3. QR Simulation
   useEffect(() => {
     if (showQR) {
       const timer = setTimeout(() => setQrSuccess(true), 2500);
@@ -75,49 +88,25 @@ export default function Home() {
     }
   }, [showQR]);
 
-  // Statisches Datum für Manifest-Header (verhindert Hydration-Fehler)
+  // 4. USER LADEN
   useEffect(() => {
-    setDateStr(new Date().toLocaleDateString("de-DE"));
+    const checkUser = async () => {
+      const { data } = await supabase.auth.getUser();
+      setUserEmail(data.user?.email ?? null);
+      setCheckingUser(false);
+    };
+
+    checkUser();
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUserEmail(session?.user?.email ?? null);
+      setCheckingUser(false);
+    });
+
+    return () => subscription.unsubscribe();
   }, []);
 
-  const saveManifest = async () => {
-    if (!manifestInput || !weight || !value) {
-      alert("Bitte Manifest, Gewicht und Wert ausfüllen.");
-      return;
-    }
-
-    try {
-      const { data, error } = await supabase
-        .from("shipments")
-        .insert([
-          {
-            content_desc: manifestInput,
-            weight_kg: Number(weight),
-            value_eur: Number(value),
-            sender_name: "Gast User",
-          },
-        ])
-        .select("id");
-
-      if (error) {
-        console.log("Supabase Error:", (error as any).message);
-        console.log("Error:", error);
-        alert("Manifest konnte nicht gespeichert werden. Bitte später erneut versuchen.");
-        return;
-      }
-
-      if (data && data[0]?.id) {
-        setShipmentId(data[0].id as string);
-        setShowQR(true);
-      }
-    } catch (error) {
-      console.log("Supabase Error:", (error as any).message ?? error);
-      console.log("Error:", error);
-      alert("Unerwarteter Fehler beim Speichern des Manifests.");
-    }
-  };
-
-  // Trips laden
+  // 5. TRIPS LADEN
   useEffect(() => {
     const fetchTrips = async () => {
       setLoadingTrips(true);
@@ -127,7 +116,7 @@ export default function Home() {
         .order("date", { ascending: true });
 
       if (!error && data) {
-        setTrips(data as Trip[]);
+        setTrips(data as any);
       }
       setLoadingTrips(false);
     };
@@ -135,54 +124,91 @@ export default function Home() {
     fetchTrips();
   }, []);
 
+  // --- HIER WURDE GEÄNDERT: SAVE MANIFEST ---
+  const saveManifest = async () => {
+    if (!manifestInput || !weight || !value) {
+      alert("Bitte Manifest, Gewicht und Wert ausfüllen.");
+      return;
+    }
+
+    try {
+      const { data: userData } = await supabase.auth.getUser();
+      // WICHTIG: User ID holen
+      const userId = userData.user?.id;
+      const senderName = userData.user?.email ? "Verifizierter User" : "Gast User";
+
+      const { data, error } = await supabase
+        .from("shipments")
+        .insert([
+          {
+            user_id: userId, // <--- HIER: ID speichern
+            content_desc: manifestInput,
+            weight_kg: Number(weight),
+            value_eur: Number(value),
+            sender_name: senderName,
+          },
+        ])
+        .select("id");
+
+      if (error) throw error;
+
+      if (data && data[0]?.id) {
+        setShipmentId(data[0].id);
+        setShowQR(true);
+      }
+    } catch (error) {
+      console.error("Manifest Error:", error);
+      alert("Fehler beim Speichern. Bist du eingeloggt?");
+    }
+  };
+
+  // --- HIER WURDE GEÄNDERT: SUBMIT TRIP ---
   const submitTrip = async () => {
     setTripError(null);
-
     if (!origin || !destination || !date || !tripWeight) {
       setTripError("Bitte alle Felder ausfüllen.");
       return;
     }
-
     setSavingTrip(true);
 
     try {
-      const { error: insertError } = await supabase.from("trips").insert({
+      const { data: userData } = await supabase.auth.getUser();
+      const userId = userData.user?.id;
+      
+      // NEU: Echten Namen aus Profil laden!
+      let displayName = "Gast Sherpa";
+      if (userId) {
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select("first_name")
+          .eq("id", userId)
+          .single();
+        if (profile?.first_name) {
+          displayName = profile.first_name;
+        }
+      }
+
+      const { error } = await supabase.from("trips").insert({
+        user_id: userId,
         origin,
         destination,
         date,
         capacity_kg: Number(tripWeight),
-        sherpa_name: "Gast Sherpa",
+        sherpa_name: displayName, // <--- HIER: Der echte Name!
       });
 
-      if (insertError) {
-        console.error(insertError);
-        setTripError(
-          "Speichern fehlgeschlagen. Bitte später erneut versuchen."
-        );
-        setSavingTrip(false);
-        return;
-      }
+      if (error) throw error;
 
       alert("Reise erfolgreich gespeichert!");
-
-      // Eingabefelder zurücksetzen
-      setOrigin("");
-      setDestination("");
-      setDate("");
-      setTripWeight("");
-
+      setOrigin(""); setDestination(""); setDate(""); setTripWeight("");
+      
       // Liste neu laden
-      const { data, error } = await supabase
-        .from("trips")
-        .select("*")
-        .order("date", { ascending: true });
+      const { data: newData } = await supabase.from("trips").select("*").order("date", { ascending: true });
+      if (newData) setTrips(newData as any);
 
-      if (!error && data) {
-        setTrips(data as Trip[]);
-      }
     } catch (error) {
       console.error(error);
-      setTripError("Unerwarteter Fehler. Bitte später erneut versuchen.");
+      setTripError("Speichern fehlgeschlagen. Bitte einloggen.");
     } finally {
       setSavingTrip(false);
     }
@@ -190,25 +216,49 @@ export default function Home() {
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 font-sans pb-20">
-      {/* NAV */}
+      {/* NAV (Mobile Optimized) */}
       <nav className="bg-white/90 backdrop-blur-md sticky top-0 z-50 border-b border-slate-200">
         <div className="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
+          
+          {/* Logo */}
           <div className="flex items-center gap-2">
             <div className="w-8 h-8 bg-slate-900 rounded-lg flex items-center justify-center text-orange-500 shadow-lg">
               <Plane size={20} />
             </div>
             <span className="font-black text-xl tracking-tighter">SHERPASS</span>
           </div>
-          <div className="hidden md:flex gap-6 text-sm font-medium text-slate-600 items-center">
-            <a href="#" className="hover:text-orange-500">
-              Start
-            </a>
-            <a href="#" className="hover:text-orange-500">
-              Für Reisende
-            </a>
-            <span className="bg-green-100 text-green-700 px-3 py-1 rounded-full text-xs font-bold">
+
+          {/* Rechtes Menü (Jetzt immer sichtbar!) */}
+          <div className="flex gap-3 text-sm font-medium text-slate-600 items-center">
+            
+            {/* Badge: Nur am Desktop sichtbar (hidden sm:block) */}
+            <span className="hidden sm:block bg-green-100 text-green-700 px-3 py-1 rounded-full text-xs font-bold">
               100% KOSTENLOS
             </span>
+            
+            {/* Login Button: IMMER sichtbar */}
+            {!userEmail ? (
+              <Link
+                href="/login"
+                className="px-4 py-2 rounded-full border border-slate-300 text-slate-700 hover:bg-slate-900 hover:text-white transition text-xs sm:text-sm font-bold"
+              >
+                Anmelden
+              </Link>
+            ) : (
+              <div className="flex items-center gap-2 sm:gap-3">
+                <Link href="/dashboard" className="flex flex-col items-end group cursor-pointer">
+                  <span className="hidden sm:block text-[10px] text-slate-400 uppercase font-bold group-hover:text-orange-500 transition">Mein Bereich</span>
+                  <span className="text-xs font-bold text-slate-900 truncate max-w-[100px]">
+                    {userEmail.split('@')[0]}
+                  </span>
+                </Link>
+                <form action={signOut}>
+                  <button type="submit" className="px-3 py-1.5 rounded-full border border-slate-300 hover:bg-red-50 hover:text-red-600 text-xs font-semibold transition">
+                    Logout
+                  </button>
+                </form>
+              </div>
+            )}
           </div>
         </div>
       </nav>
@@ -221,9 +271,7 @@ export default function Home() {
             Peer-to-Peer Logistik
           </span>
           <h1 className="text-white font-black text-5xl md:text-7xl mb-6 leading-tight drop-shadow-2xl">
-            Sende dorthin,
-            <br />
-            wo die Post nicht hinkommt.
+            Sende dorthin,<br />wo die Post nicht hinkommt.
           </h1>
           <p className="text-slate-400 text-lg md:text-xl mb-10 max-w-2xl mx-auto">
             Verbinde dich mit Reisenden. Sende Dokumente, Medikamente und
@@ -251,16 +299,10 @@ export default function Home() {
       {/* MANIFEST SECTION */}
       <section className="py-20 bg-white">
         <div className="max-w-7xl mx-auto px-4 grid lg:grid-cols-2 gap-16 items-start">
-          {/* Input Area */}
           <div>
             <h2 className="text-3xl font-black mb-4 text-slate-900">
               Sicherheit durch Transparenz.
             </h2>
-            <p className="text-slate-500 mb-8 text-lg">
-              Erstelle in Sekunden ein digitales Manifest. Das schützt Reisende
-              vor dem Zoll und garantiert dir die Ankunft.
-            </p>
-
             <div className="bg-slate-900 p-8 rounded-2xl shadow-xl border border-slate-800">
               <label className="text-xs font-bold text-orange-500 uppercase mb-2 block tracking-wider">
                 Manifest erstellen
@@ -296,7 +338,6 @@ export default function Home() {
                 </div>
               </div>
 
-              {/* WARNING LOGIC */}
               {warning && warning.found && (
                 <div
                   className={`p-4 rounded-lg flex gap-3 mb-4 animate-in fade-in slide-in-from-top-2 ${
@@ -333,10 +374,8 @@ export default function Home() {
             </div>
           </div>
 
-          {/* Visual Manifest Card */}
           <div className="relative">
             <div className="bg-white text-slate-900 rounded-xl shadow-2xl max-w-sm mx-auto border border-slate-200 transform lg:rotate-2 hover:rotate-0 transition duration-500 overflow-hidden">
-              {/* Header */}
               <div className="bg-slate-900 text-white p-4 flex justify-between items-center">
                 <div className="flex items-center gap-2">
                   <div className="w-6 h-6 bg-white/10 rounded flex items-center justify-center text-orange-500 font-bold text-xs">
@@ -356,7 +395,6 @@ export default function Home() {
                 </div>
               </div>
 
-              {/* Body */}
               <div className="p-5 space-y-4">
                 <div className="flex justify-between border-b border-slate-100 pb-3">
                   <div>
@@ -427,7 +465,6 @@ export default function Home() {
                 </div>
               </div>
 
-              {/* Footer */}
               <div className="bg-slate-50 px-5 py-3 border-t border-slate-200 flex justify-between items-center">
                 <div className="text-[10px] text-slate-400 font-mono">
                   ID: #992-AX-22
@@ -447,7 +484,7 @@ export default function Home() {
       </section>
 
       {/* TRIPS SECTION */}
-      <section className="py-16 bg-slate-900 text-slate-50 border-t border-slate-800">
+      <section className="py-16 bg-slate-900 text-slate-50 border-t border-slate-800" id="traveler">
         <div className="max-w-7xl mx-auto px-4 grid lg:grid-cols-2 gap-16 items-start">
           {/* Trip Formular */}
           <div>
@@ -459,8 +496,7 @@ export default function Home() {
             </div>
             <p className="text-slate-400 mb-6">
               Trage deine nächste Flugreise ein. Andere können dir dann sichere
-              Sendungen anvertrauen. Du bleibst anonym – wir zeigen nur den
-              Vornamen.
+              Sendungen anvertrauen.
             </p>
 
             <div className="bg-slate-800/80 border border-slate-700 rounded-2xl p-6 space-y-4">
@@ -532,11 +568,6 @@ export default function Home() {
                 <Zap size={18} />
                 {savingTrip ? "Wird gespeichert..." : "Reise eintragen"}
               </button>
-
-              <p className="text-[11px] text-slate-500">
-                Mit dem Eintrag bestätigst du, keine verbotenen Inhalte zu
-                transportieren. Sherpass führt zusätzliche Checks durch.
-              </p>
             </div>
           </div>
 
@@ -547,8 +578,7 @@ export default function Home() {
               <h2 className="text-2xl font-black">Aktuelle Sherpa-Reisen.</h2>
             </div>
             <p className="text-slate-400 mb-6">
-              Finde eine passende Verbindung für deine Sendung. Die Daten
-              stammen direkt aus der Sherpass-Datenbank.
+              Finde eine passende Verbindung für deine Sendung.
             </p>
 
             <div className="space-y-3">
@@ -577,7 +607,7 @@ export default function Home() {
                       <div className="text-sm font-semibold">
                         {new Date(trip.date).toLocaleDateString()} ·{" "}
                         <span className="text-slate-300">
-                          {trip.weight} kg frei
+                          {trip.capacity_kg} kg frei
                         </span>
                       </div>
                       <div className="text-xs text-slate-500 mt-1">
@@ -594,7 +624,7 @@ export default function Home() {
         </div>
       </section>
 
-      {/* MODAL: WAYBILL */}
+      {/* Modals hier einfügen... (QR, Waybill bleiben gleich) */}
       {showWaybill && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in">
           <div className="bg-white w-full max-w-2xl min-h-[600px] shadow-2xl relative p-8 font-mono text-sm overflow-y-auto max-h-[90vh]">
@@ -625,7 +655,7 @@ export default function Home() {
                 <span className="block text-[10px] font-bold uppercase mb-2 bg-black text-white px-1 inline-block">
                   ABSENDER
                 </span>
-                <p className="font-bold">Verified User #8821</p>
+                <p className="font-bold">Verified User</p>
                 <p>Frankfurt Airport (FRA)</p>
                 <p>Germany</p>
               </div>
@@ -675,7 +705,6 @@ export default function Home() {
         </div>
       )}
 
-      {/* MODAL: QR SCANNER */}
       {showQR && (
         <div className="fixed inset-0 z-[100] bg-black flex flex-col items-center justify-center p-4">
           <button
@@ -712,4 +741,3 @@ export default function Home() {
     </div>
   );
 }
-
