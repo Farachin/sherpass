@@ -329,10 +329,15 @@ function DashboardContent() {
           // Finde Reise-Kontext aus Shipments oder Trips
           let tripContext = null;
           if (lastMessage?.shipments?.trips) {
-            tripContext = {
-              origin: lastMessage.shipments.trips.origin,
-              destination: lastMessage.shipments.trips.destination
-            };
+            const trips = Array.isArray(lastMessage.shipments.trips) 
+              ? lastMessage.shipments.trips[0] 
+              : lastMessage.shipments.trips;
+            if (trips) {
+              tripContext = {
+                origin: trips.origin,
+                destination: trips.destination
+              };
+            }
           } else if (lastMessage?.shipment_id) {
             // Versuche Trip über Shipment zu finden
             const { data: shipment } = await supabase
@@ -342,10 +347,13 @@ function DashboardContent() {
               .single();
             
             if (shipment?.trips) {
-              tripContext = {
-                origin: shipment.trips.origin,
-                destination: shipment.trips.destination
-              };
+              const trips = Array.isArray(shipment.trips) ? shipment.trips[0] : shipment.trips;
+              if (trips) {
+                tripContext = {
+                  origin: trips.origin,
+                  destination: trips.destination
+                };
+              }
             }
           }
 
