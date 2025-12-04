@@ -400,8 +400,13 @@ function HomeContent() {
           <Plane className="text-orange-500" /> <span className="font-black text-xl tracking-tighter">SHERPASS</span>
         </Link>
         <div className="flex gap-4 items-center">
+          {/* Desktop: Vollständiger Button mit Text */}
           <button onClick={() => setShowOfferModal(true)} className="hidden sm:flex text-orange-500 font-bold text-sm items-center gap-1 hover:bg-orange-50 px-3 py-2 rounded-full transition">
             <Plus size={16}/> Reise anbieten
+          </button>
+          {/* Mobile: Nur Icon-Button */}
+          <button onClick={() => setShowOfferModal(true)} className="sm:hidden bg-orange-500 text-white p-2.5 rounded-full shadow-lg hover:bg-orange-600 transition flex items-center justify-center">
+            <Plus size={20}/>
           </button>
           {!userEmail ? (
             <Link href="/login" className="bg-slate-100 hover:bg-slate-200 p-2 rounded-full"><User size={20}/></Link>
@@ -703,6 +708,15 @@ function HomeContent() {
       <footer className="bg-slate-50 py-12 border-t border-slate-200 mt-20 text-center text-sm text-slate-400">
         SHERPASS © 2025
       </footer>
+
+      {/* Mobile: Sticky "Reise anbieten" Button am unteren Rand */}
+      <button 
+        onClick={() => setShowOfferModal(true)} 
+        className="sm:hidden fixed bottom-6 right-6 bg-orange-500 text-white w-14 h-14 rounded-full shadow-2xl hover:bg-orange-600 transition flex items-center justify-center z-50 animate-in fade-in slide-in-from-bottom-4"
+        aria-label="Reise anbieten"
+      >
+        <Plus size={24} strokeWidth={3}/>
+      </button>
 
     </div>
   );
