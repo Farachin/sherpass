@@ -1,110 +1,67 @@
-import { redirect } from "next/navigation";
-import { Mail, Plane } from "lucide-react";
-import { createClient } from "../../utils/supabase/server";
+import { login, signup } from "./actions";
+import { Plane, Lock, Mail, AlertCircle } from "lucide-react";
+import Link from "next/link";
 
-async function login(formData: FormData) {
-  "use server";
-
-  const email = String(formData.get("email") || "").trim();
-  if (!email) {
-    return;
-  }
-
-  const supabase = await createClient();
-  
-  // HIER IST DIE ÄNDERUNG:
-  const isProduction = process.env.NODE_ENV === "production";
-  const redirectTo = isProduction
-    ? "https://sherpass.vercel.app/auth/callback"
-    : "http://localhost:3000/auth/callback";
-
-  const { error } = await supabase.auth.signInWithOtp({
-    email,
-    options: {
-      emailRedirectTo: redirectTo,
-    },
-  });
-
-  if (error) {
-    console.error("Supabase Auth Error:", error.message);
-  }
-
-  redirect("/login?sent=1");
-}
-
-// HIER IST DIE ÄNDERUNG:
-// 1. "async" vor function
-// 2. searchParams ist jetzt ein "Promise"
 export default async function LoginPage({
   searchParams,
 }: {
-  searchParams: Promise<{ sent?: string }>;
+  searchParams: Promise<{ error?: string }>;
 }) {
-  // 3. Wir warten auf die Parameter
+  // Fehlermeldung auslesen (Next.js 15 Style)
   const params = await searchParams;
-  const sent = params.sent === "1";
+  const error = params.error;
 
   return (
-    <div className="min-h-screen bg-slate-950 flex items-center justify-center px-4">
-      <div className="w-full max-w-md bg-slate-900/80 border border-slate-800 rounded-2xl shadow-2xl p-8">
-        <div className="flex items-center gap-3 mb-6">
-          <div className="w-9 h-9 bg-slate-950 rounded-lg flex items-center justify-center text-orange-500 shadow-lg">
-            <Plane size={20} />
-          </div>
-          <div>
-            <div className="text-xs uppercase tracking-[0.2em] text-slate-500 font-bold">
-              Sherpass
-            </div>
-            <h1 className="text-xl font-black text-slate-50 tracking-tight">
-              Anmelden
-            </h1>
+    <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4 font-sans">
+      <div className="bg-white p-8 rounded-2xl shadow-xl w-full max-w-md border border-slate-100 relative">
+        
+        {/* Zurück Button */}
+        <Link href="/" className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 text-sm font-bold">✕ Schließen</Link>
+
+        <div className="flex justify-center mb-6">
+          <div className="w-14 h-14 bg-slate-900 rounded-2xl flex items-center justify-center text-orange-500 shadow-lg">
+            <Plane size={28} />
           </div>
         </div>
+        
+        <h1 className="text-2xl font-black text-slate-900 mb-2 text-center">Willkommen bei Sherpass</h1>
+        <p className="text-slate-500 text-center mb-8 text-sm">Logg dich ein oder erstelle einen Account.</p>
 
-        <p className="text-sm text-slate-400 mb-6">
-          Gib deine E-Mail-Adresse ein. Wir senden dir einen{" "}
-          <span className="text-slate-100 font-semibold">Magic Link</span>, mit
-          dem du dich sicher anmelden kannst – ohne Passwort.
-        </p>
-
-        {sent && (
-          <div className="mb-4 text-xs text-emerald-300 bg-emerald-500/10 border border-emerald-500/40 rounded-lg px-3 py-2">
-            Magic Link gesendet! Bitte prüfe dein E-Mail-Postfach.
+        {/* Fehlermeldung anzeigen */}
+        {error === "login_failed" && (
+          <div className="bg-red-50 text-red-600 p-3 rounded-lg text-sm font-bold mb-4 flex items-center gap-2">
+            <AlertCircle size={16}/> E-Mail oder Passwort falsch.
+          </div>
+        )}
+        {error === "signup_failed" && (
+          <div className="bg-red-50 text-red-600 p-3 rounded-lg text-sm font-bold mb-4 flex items-center gap-2">
+            <AlertCircle size={16}/> Registrierung fehlgeschlagen.
           </div>
         )}
 
-        <form action={login} className="space-y-4">
+        <form className="space-y-4">
           <div>
-            <label className="block text-xs font-semibold text-slate-400 uppercase mb-2">
-              E-Mail-Adresse
-            </label>
-            <div className="relative">
-              <span className="absolute inset-y-0 left-3 flex items-center text-slate-500">
-                <Mail size={16} />
-              </span>
-              <input
-                type="email"
-                name="email"
-                required
-                placeholder="du@example.com"
-                className="w-full bg-slate-950 border border-slate-700 rounded-lg py-2.5 pl-9 pr-3 text-sm text-slate-50 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
-              />
+            <label className="text-xs font-bold text-slate-500 uppercase ml-1">E-Mail</label>
+            <div className="relative mt-1">
+              <Mail className="absolute left-3 top-3 text-slate-400" size={18}/>
+              <input name="email" type="email" required placeholder="name@beispiel.com" className="w-full bg-slate-50 border border-slate-200 rounded-xl py-3 pl-10 focus:ring-2 focus:ring-orange-500 outline-none transition text-slate-900" />
+            </div>
+          </div>
+          <div>
+            <label className="text-xs font-bold text-slate-500 uppercase ml-1">Passwort</label>
+            <div className="relative mt-1">
+              <Lock className="absolute left-3 top-3 text-slate-400" size={18}/>
+              <input name="password" type="password" required placeholder="••••••••" minLength={6} className="w-full bg-slate-50 border border-slate-200 rounded-xl py-3 pl-10 focus:ring-2 focus:ring-orange-500 outline-none transition text-slate-900" />
             </div>
           </div>
 
-          <button
-            type="submit"
-            className="w-full bg-orange-500 hover:bg-orange-600 text-white font-bold py-2.5 rounded-lg text-sm flex items-center justify-center gap-2 transition mt-2"
-          >
-            <Mail size={16} />
-            Magic Link senden
-          </button>
+          <div className="grid grid-cols-2 gap-3 pt-4">
+            <button formAction={login} className="w-full bg-slate-900 text-white font-bold py-3 rounded-xl hover:bg-slate-800 transition shadow-lg">Einloggen</button>
+            <button formAction={signup} className="w-full bg-white border-2 border-slate-200 text-slate-900 font-bold py-3 rounded-xl hover:border-orange-500 hover:text-orange-500 transition">Registrieren</button>
+          </div>
         </form>
-
-        <p className="mt-6 text-[11px] text-slate-500 text-center leading-relaxed">
-          Mit der Anmeldung akzeptierst du unsere Nutzungsbedingungen. Wir
-          nutzen Supabase Auth für sichere Sitzungscookies.
-        </p>
+        
+        <p className="text-center text-xs text-slate-400 mt-6">Min. 6 Zeichen für das Passwort.</p>
       </div>
     </div>
   );
