@@ -16,6 +16,7 @@ function DashboardContent() {
   const [shipments, setShipments] = useState<any[]>([]);
   const [myRequests, setMyRequests] = useState<any[]>([]); // Meine Anfragen (als Absender)
   const [incomingRequests, setIncomingRequests] = useState<any[]>([]); // Eingehende Anfragen (als Sherpa)
+  const [conversations, setConversations] = useState<any[]>([]); // Alle Konversationen für Inbox
   const [reviews, setReviews] = useState<any[]>([]);
   const [blockedUsers, setBlockedUsers] = useState<any[]>([]);
   const [user, setUser] = useState<any>(null);
@@ -78,6 +79,9 @@ function DashboardContent() {
 
       const { data: b } = await supabase.from("blocked_users").select("*, blocked:blocked_id(id, email)").eq("blocker_id", user.id);
       if (b) setBlockedUsers(b);
+
+      // Lade alle Konversationen des Users
+      await loadConversations(user.id);
 
       setLoading(false);
       
@@ -170,7 +174,7 @@ function DashboardContent() {
     if (error) alert(error.message);
     else {
       alert("Passwort geändert!");
-      setNewPassword("");
+    setNewPassword("");
     }
   };
 
@@ -183,7 +187,7 @@ function DashboardContent() {
     if (error) alert(error.message);
     else {
       alert("Bestätigungsmail an die neue Adresse gesendet!");
-      setNewEmail("");
+    setNewEmail("");
     }
   };
 
@@ -286,6 +290,90 @@ function DashboardContent() {
     );
   };
 
+  const loadConversations = async (userId: string) => {
+    try {
+      // Lade alle Konversationen, an denen der User beteiligt ist
+      const { data: convs } = await supabase
+        .from('conversations')
+        .select('*')
+        .or(`participant1_id.eq.${userId},participant2_id.eq.${userId}`)
+        .order('created_at', { ascending: false });
+
+      if (!convs || convs.length === 0) {
+        setConversations([]);
+        return;
+      }
+
+      // Für jede Konversation: Lade Partner-Info, letzte Nachricht und Reise-Kontext
+      const conversationsWithDetails = await Promise.all(
+        convs.map(async (conv) => {
+          // Bestimme Partner-ID
+          const partnerId = conv.participant1_id === userId ? conv.participant2_id : conv.participant1_id;
+          
+          // Lade Partner-Profil
+          const { data: partnerProfile } = await supabase
+            .from('profiles')
+            .select('first_name')
+            .eq('id', partnerId)
+            .single();
+          
+          // Lade letzte Nachricht
+          const { data: lastMessage } = await supabase
+            .from('messages')
+            .select('*, shipments(trip_id, trips(origin, destination))')
+            .eq('conversation_id', conv.id)
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .single();
+          
+          // Finde Reise-Kontext aus Shipments oder Trips
+          let tripContext = null;
+          if (lastMessage?.shipments?.trips) {
+            tripContext = {
+              origin: lastMessage.shipments.trips.origin,
+              destination: lastMessage.shipments.trips.destination
+            };
+          } else if (lastMessage?.shipment_id) {
+            // Versuche Trip über Shipment zu finden
+            const { data: shipment } = await supabase
+              .from('shipments')
+              .select('trip_id, trips(origin, destination)')
+              .eq('id', lastMessage.shipment_id)
+              .single();
+            
+            if (shipment?.trips) {
+              tripContext = {
+                origin: shipment.trips.origin,
+                destination: shipment.trips.destination
+              };
+            }
+          }
+
+          return {
+            ...conv,
+            partnerId,
+            partnerName: partnerProfile?.first_name || 'User',
+            lastMessage: lastMessage || null,
+            tripContext,
+            lastMessageTime: lastMessage?.created_at || conv.created_at
+          };
+        })
+      );
+
+      // Sortiere nach neuester Nachricht
+      conversationsWithDetails.sort((a, b) => {
+        const timeA = new Date(a.lastMessageTime).getTime();
+        const timeB = new Date(b.lastMessageTime).getTime();
+        return timeB - timeA;
+      });
+
+      setConversations(conversationsWithDetails);
+    } catch (error) {
+      console.error('Fehler beim Laden der Konversationen:', error);
+      setConversations([]);
+    }
+  };
+
   const openChat = (conversationId: string, partnerId: string, partnerName: string, tripId?: string) => {
     window.location.href = `/?openChat=${conversationId}&partnerId=${partnerId}&partnerName=${encodeURIComponent(partnerName)}${tripId ? `&tripId=${tripId}` : ''}`;
   };
@@ -297,7 +385,7 @@ function DashboardContent() {
       {/* SIDEBAR */}
       <aside className="w-full md:w-64 bg-white border-r border-slate-200 p-6 flex-shrink-0 sticky top-0 md:h-screen flex flex-col">
         <Link href="/" className="flex items-center gap-2 text-slate-500 hover:text-slate-900 font-bold mb-8 text-sm">
-          <ArrowLeft size={16}/> Zurück
+            <ArrowLeft size={16}/> Zurück
         </Link>
         
         <nav className="space-y-1 flex-1">
@@ -320,6 +408,14 @@ function DashboardContent() {
               </span>
             )}
           </button>
+          <button onClick={()=>setActiveTab('messages')} className={`w-full text-left p-3 rounded-lg flex items-center gap-3 font-bold text-sm transition relative ${activeTab==='messages'?'bg-slate-100 text-slate-900':'text-slate-500 hover:bg-slate-50'}`}>
+            <Mail size={16}/> Nachrichten
+            {conversations.length > 0 && (
+              <span className="ml-auto bg-orange-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center font-bold">
+                {conversations.length}
+              </span>
+            )}
+          </button>
           <button onClick={()=>setActiveTab('shipments')} className={`w-full text-left p-3 rounded-lg flex items-center gap-3 font-bold text-sm transition ${activeTab==='shipments'?'bg-slate-100 text-slate-900':'text-slate-500 hover:bg-slate-50'}`}>
             <Package size={16}/> Meine Pakete
           </button>
@@ -332,7 +428,7 @@ function DashboardContent() {
         </nav>
 
         <div className="mt-auto pt-6 border-t">
-          <div className="flex items-center gap-3 mb-4 px-2">
+             <div className="flex items-center gap-3 mb-4 px-2">
             <div className="w-8 h-8 bg-slate-900 rounded-full flex items-center justify-center text-white text-xs font-bold">
               {user?.email?.charAt(0).toUpperCase() || 'U'}
             </div>
@@ -384,7 +480,7 @@ function DashboardContent() {
                 </div>
               )}
             </div>
-          </div>
+             </div>
           <form action={signOut}>
             <button type="submit" className="w-full text-left p-2 text-red-500 font-bold text-xs flex items-center gap-2 hover:bg-red-50 rounded transition">
               <LogOut size={14}/> Ausloggen
@@ -420,7 +516,7 @@ function DashboardContent() {
         )}
 
         {activeTab === 'my-requests' && (
-          <div className="space-y-4">
+                    <div className="space-y-4">
             <h1 className="text-2xl font-black mb-4">Meine Anfragen</h1>
             {myRequests.length > 0 ? (
               myRequests.map(req => (
@@ -492,7 +588,7 @@ function DashboardContent() {
                 <p>Noch keine Anfragen gestellt.</p>
               </div>
             )}
-          </div>
+                            </div>
         )}
 
         {activeTab === 'incoming-requests' && (
@@ -512,8 +608,8 @@ function DashboardContent() {
                         </div>
                         <div className="mb-2">
                           {getStatusBadge(shipment?.status || 'pending')}
+                            </div>
                         </div>
-                      </div>
                     </div>
                     {shipment?.status === 'pending' && (
                       <div className="flex gap-2 mt-3">
@@ -577,21 +673,92 @@ function DashboardContent() {
                         <MessageCircle size={16}/> Chat öffnen
                       </button>
                     )}
-                  </div>
+                </div>
                 );
               })
             ) : (
               <div className="bg-white p-8 rounded-xl border border-slate-200 text-center text-slate-400">
                 <MessageCircle size={48} className="mx-auto mb-4 opacity-50"/>
                 <p>Noch keine eingehenden Anfragen.</p>
+                </div>
+            )}
+            </div>
+         )}
+
+        {activeTab === 'messages' && (
+            <div className="space-y-4">
+            <h1 className="text-2xl font-black mb-4">Nachrichten</h1>
+            {conversations.length > 0 ? (
+              conversations.map(conv => {
+                const lastMsg = conv.lastMessage;
+                const preview = lastMsg?.content || 'Keine Nachrichten';
+                const truncatedPreview = preview.length > 60 ? preview.substring(0, 60) + '...' : preview;
+                const timeAgo = lastMsg?.created_at 
+                  ? new Date(lastMsg.created_at).toLocaleString('de-DE', { 
+                      day: '2-digit', 
+                      month: '2-digit', 
+                      hour: '2-digit', 
+                      minute: '2-digit' 
+                    })
+                  : new Date(conv.created_at).toLocaleString('de-DE', { 
+                      day: '2-digit', 
+                      month: '2-digit' 
+                    });
+
+                return (
+                  <div
+                    key={conv.id}
+                    onClick={() => {
+                      const tripId = lastMsg?.shipments?.trip_id || null;
+                      openChat(conv.id, conv.partnerId, conv.partnerName, tripId);
+                    }}
+                    className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm hover:shadow-md transition cursor-pointer"
+                  >
+                    <div className="flex gap-4 items-start">
+                      <div className="w-12 h-12 bg-orange-500 rounded-full flex items-center justify-center text-white font-bold text-lg flex-shrink-0">
+                        {conv.partnerName.charAt(0).toUpperCase()}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex justify-between items-start mb-1">
+                        <div>
+                            <h3 className="font-bold text-lg text-slate-900">{conv.partnerName}</h3>
+                            {conv.tripContext && (
+                              <p className="text-xs text-slate-500 mt-0.5">
+                                {conv.tripContext.origin} ➔ {conv.tripContext.destination}
+                              </p>
+                            )}
+                          </div>
+                          <span className="text-xs text-slate-400 flex-shrink-0 ml-2">
+                            {timeAgo}
+                          </span>
+                        </div>
+                        <p className="text-sm text-slate-600 mt-1 line-clamp-2">
+                          {lastMsg?.type === 'booking_request' ? (
+                            <span className="flex items-center gap-1 text-orange-600 font-medium">
+                              <Package size={14}/> Buchungsanfrage
+                            </span>
+                          ) : (
+                            truncatedPreview
+                          )}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })
+            ) : (
+              <div className="bg-white p-8 rounded-xl border border-slate-200 text-center text-slate-400">
+                <Mail size={48} className="mx-auto mb-4 opacity-50"/>
+                <p>Noch keine Nachrichten.</p>
+                <p className="text-xs mt-2">Starte eine Unterhaltung über eine Reise.</p>
               </div>
             )}
-          </div>
-        )}
+            </div>
+         )}
 
-        {activeTab === 'shipments' && (
-          <div className="space-y-4">
-            <h1 className="text-2xl font-black mb-4">Meine Pakete</h1>
+         {activeTab === 'shipments' && (
+            <div className="space-y-4">
+                <h1 className="text-2xl font-black mb-4">Meine Pakete</h1>
             {shipments.length > 0 ? (
               shipments.map(s => (
                 <div key={s.id} className="bg-white p-4 rounded-xl border border-slate-200 flex justify-between items-center shadow-sm">
@@ -650,7 +817,7 @@ function DashboardContent() {
                   </div>
                   <p className="text-xs text-slate-400 mt-1">Mindestens 6 Zeichen</p>
                 </div>
-                <div>
+                        <div>
                   <label className="text-xs font-bold uppercase text-slate-400 mb-1 block">E-Mail ändern</label>
                   <div className="flex gap-2">
                     <input 
@@ -691,7 +858,7 @@ function DashboardContent() {
                         Entblockieren
                       </button>
                     </div>
-                  ))}
+                ))}
                 </div>
               ) : (
                 <div className="p-4 bg-slate-50 rounded border border-slate-200 text-xs text-center text-slate-400">
@@ -699,8 +866,8 @@ function DashboardContent() {
                 </div>
               )}
             </div>
-          </div>
-        )}
+            </div>
+         )}
       </main>
     </div>
   );
@@ -717,4 +884,3 @@ export default function Dashboard() {
     </Suspense>
   );
 }
-
