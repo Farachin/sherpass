@@ -4,7 +4,7 @@ import { createClient } from "@/utils/supabase/client";
 import { useEffect, useState, Suspense } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { Plane, Package, Settings, LogOut, Star, ArrowLeft, Trash2, Lock, Mail, ShieldAlert, Bell, CheckCircle, XCircle, Clock, MessageCircle } from "lucide-react";
+import { Plane, Package, Settings, LogOut, Star, ArrowLeft, Trash2, Lock, Mail, ShieldAlert, Bell, CheckCircle, XCircle, Clock, MessageCircle, Menu, X, Luggage } from "lucide-react";
 import { signOut } from "../auth/actions";
 
 function DashboardContent() {
@@ -29,6 +29,9 @@ function DashboardContent() {
   
   const [newPassword, setNewPassword] = useState("");
   const [newEmail, setNewEmail] = useState("");
+  
+  // Mobile Navigation
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   useEffect(() => {
     const tab = searchParams.get('tab');
@@ -121,7 +124,7 @@ function DashboardContent() {
       if (allRequests) {
         const newRequests = allRequests.filter(msg => {
           const shipment = msg.shipments;
-          return shipment && shipment.trip_id && tripIds.includes(shipment.trip_id) && shipment.status === 'pending';
+          return shipment && shipment.trip_id && tripIds.includes(shipment.trip_id) && (shipment.status?.toLowerCase() || 'pending') === 'pending';
         });
         
         newRequests.forEach(msg => {
@@ -150,8 +153,8 @@ function DashboardContent() {
       myShipments.forEach(ship => {
         notifications.push({
           id: `status-${ship.id}`,
-          type: ship.status === 'accepted' ? 'accepted' : 'rejected',
-          message: `Deine Anfrage wurde ${ship.status === 'accepted' ? 'akzeptiert' : 'abgelehnt'}`,
+          type: (ship.status?.toLowerCase() || 'pending') === 'accepted' ? 'accepted' : 'rejected',
+          message: `Deine Anfrage wurde ${(ship.status?.toLowerCase() || 'pending') === 'accepted' ? 'akzeptiert' : 'abgelehnt'}`,
           shipment: ship,
           created_at: ship.updated_at
         });
@@ -202,8 +205,36 @@ function DashboardContent() {
     window.location.reload();
   };
 
-  const handleAcceptRequest = async (messageId: string, shipmentId: string, tripId: string, senderId: string) => {
-    await supabase.from('shipments').update({ status: 'accepted', trip_id: tripId }).eq('id', shipmentId);
+  const handleToggleAcceptRequest = async (messageId: string, shipmentId: string, tripId: string, senderId: string, currentStatus: string) => {
+    // Case-insensitive Vergleich
+    const statusLower = (currentStatus || 'pending').toLowerCase();
+    const newStatus = statusLower === 'accepted' ? 'pending' : 'accepted';
+    
+    console.log('DEBUG handleToggleAcceptRequest:', { 
+      currentStatus, 
+      statusLower, 
+      newStatus 
+    });
+    
+    // Update Status optimistisch im State
+    setIncomingRequests(prev => prev.map(req => {
+      if (req.shipments?.id === shipmentId) {
+        return {
+          ...req,
+          shipments: {
+            ...req.shipments,
+            status: newStatus
+          }
+        };
+      }
+      return req;
+    }));
+    
+    // Update in Datenbank
+    await supabase.from('shipments').update({ 
+      status: newStatus, 
+      trip_id: newStatus === 'accepted' ? tripId : null 
+    }).eq('id', shipmentId);
     
     // Finde oder erstelle Conversation
     const { data: existingConv } = await supabase
@@ -224,16 +255,16 @@ function DashboardContent() {
     }
     
     if (convId) {
+      const message = newStatus === 'accepted' 
+        ? "✅ Anfrage akzeptiert!" 
+        : "📦 Paket wieder aus dem Koffer genommen.";
       await supabase.from('messages').insert({
         conversation_id: convId,
         sender_id: user.id,
-        content: "✅ Anfrage akzeptiert!",
+        content: message,
         type: 'text'
       });
     }
-    
-    // Reload
-    window.location.reload();
   };
 
   const handleRejectRequest = async (messageId: string, shipmentId: string, senderId: string) => {
@@ -390,33 +421,69 @@ function DashboardContent() {
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col md:flex-row">
+      {/* MOBILE HEADER mit Hamburger */}
+      <div className="md:hidden bg-white border-b border-slate-200 p-4 flex items-center justify-between sticky top-0 z-50">
+        <button
+          onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+          className="p-2 hover:bg-slate-100 rounded-lg transition"
+          aria-label="Menü öffnen"
+        >
+          {mobileMenuOpen ? <X size={24} /> : <Menu size={24} />}
+        </button>
+        <h1 className="font-black text-lg">Dashboard</h1>
+        <div className="w-10"></div> {/* Spacer für Zentrierung */}
+      </div>
+
+      {/* MOBILE OVERLAY */}
+      {mobileMenuOpen && (
+        <div
+          className="md:hidden fixed inset-0 bg-black/50 z-40"
+          onClick={() => setMobileMenuOpen(false)}
+        />
+      )}
+
       {/* SIDEBAR */}
-      <aside className="w-full md:w-64 bg-white border-r border-slate-200 p-6 flex-shrink-0 sticky top-0 md:h-screen flex flex-col">
-        <Link href="/" className="flex items-center gap-2 text-slate-500 hover:text-slate-900 font-bold mb-8 text-sm">
+      <aside className={`
+        w-full md:w-64 bg-white border-r border-slate-200 p-6 flex-shrink-0 
+        fixed md:sticky top-0 md:top-0 h-screen z-40 md:z-auto
+        flex flex-col
+        transform transition-transform duration-300 ease-in-out
+        ${mobileMenuOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
+      `}>
+        <div className="flex items-center justify-between mb-8">
+          <Link href="/" className="flex items-center gap-2 text-slate-500 hover:text-slate-900 font-bold text-sm" onClick={() => setMobileMenuOpen(false)}>
             <ArrowLeft size={16}/> Zurück
         </Link>
+          <button
+            onClick={() => setMobileMenuOpen(false)}
+            className="md:hidden p-2 hover:bg-slate-100 rounded-lg transition"
+            aria-label="Menü schließen"
+          >
+            <X size={20} />
+          </button>
+        </div>
         
         <nav className="space-y-1 flex-1">
-          <button onClick={()=>setActiveTab('trips')} className={`w-full text-left p-3 rounded-lg flex items-center gap-3 font-bold text-sm transition ${activeTab==='trips'?'bg-slate-100 text-slate-900':'text-slate-500 hover:bg-slate-50'}`}>
+          <button onClick={()=>{setActiveTab('trips'); setMobileMenuOpen(false);}} className={`w-full text-left p-3 rounded-lg flex items-center gap-3 font-bold text-sm transition ${activeTab==='trips'?'bg-slate-100 text-slate-900':'text-slate-500 hover:bg-slate-50'}`}>
             <Plane size={16}/> Meine Reisen
           </button>
-          <button onClick={()=>setActiveTab('my-requests')} className={`w-full text-left p-3 rounded-lg flex items-center gap-3 font-bold text-sm transition relative ${activeTab==='my-requests'?'bg-slate-100 text-slate-900':'text-slate-500 hover:bg-slate-50'}`}>
+          <button onClick={()=>{setActiveTab('my-requests'); setMobileMenuOpen(false);}} className={`w-full text-left p-3 rounded-lg flex items-center gap-3 font-bold text-sm transition relative ${activeTab==='my-requests'?'bg-slate-100 text-slate-900':'text-slate-500 hover:bg-slate-50'}`}>
             <Package size={16}/> Meine Anfragen
-            {myRequests.filter(r => r.status === 'pending').length > 0 && (
+            {myRequests.filter(r => (r.status?.toLowerCase() || 'pending') === 'pending').length > 0 && (
               <span className="ml-auto bg-orange-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center font-bold">
-                {myRequests.filter(r => r.status === 'pending').length}
+                {myRequests.filter(r => (r.status?.toLowerCase() || 'pending') === 'pending').length}
               </span>
             )}
           </button>
-          <button onClick={()=>setActiveTab('incoming-requests')} className={`w-full text-left p-3 rounded-lg flex items-center gap-3 font-bold text-sm transition relative ${activeTab==='incoming-requests'?'bg-slate-100 text-slate-900':'text-slate-500 hover:bg-slate-50'}`}>
+          <button onClick={()=>{setActiveTab('incoming-requests'); setMobileMenuOpen(false);}} className={`w-full text-left p-3 rounded-lg flex items-center gap-3 font-bold text-sm transition relative ${activeTab==='incoming-requests'?'bg-slate-100 text-slate-900':'text-slate-500 hover:bg-slate-50'}`}>
             <MessageCircle size={16}/> Eingehende Anfragen
-            {incomingRequests.filter(r => r.shipments?.status === 'pending').length > 0 && (
+            {incomingRequests.filter(r => (r.shipments?.status?.toLowerCase() || 'pending') === 'pending').length > 0 && (
               <span className="ml-auto bg-blue-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center font-bold">
-                {incomingRequests.filter(r => r.shipments?.status === 'pending').length}
+                {incomingRequests.filter(r => (r.shipments?.status?.toLowerCase() || 'pending') === 'pending').length}
               </span>
             )}
           </button>
-          <button onClick={()=>setActiveTab('messages')} className={`w-full text-left p-3 rounded-lg flex items-center gap-3 font-bold text-sm transition relative ${activeTab==='messages'?'bg-slate-100 text-slate-900':'text-slate-500 hover:bg-slate-50'}`}>
+          <button onClick={()=>{setActiveTab('messages'); setMobileMenuOpen(false);}} className={`w-full text-left p-3 rounded-lg flex items-center gap-3 font-bold text-sm transition relative ${activeTab==='messages'?'bg-slate-100 text-slate-900':'text-slate-500 hover:bg-slate-50'}`}>
             <Mail size={16}/> Nachrichten
             {conversations.length > 0 && (
               <span className="ml-auto bg-orange-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center font-bold">
@@ -424,13 +491,13 @@ function DashboardContent() {
               </span>
             )}
           </button>
-          <button onClick={()=>setActiveTab('shipments')} className={`w-full text-left p-3 rounded-lg flex items-center gap-3 font-bold text-sm transition ${activeTab==='shipments'?'bg-slate-100 text-slate-900':'text-slate-500 hover:bg-slate-50'}`}>
+          <button onClick={()=>{setActiveTab('shipments'); setMobileMenuOpen(false);}} className={`w-full text-left p-3 rounded-lg flex items-center gap-3 font-bold text-sm transition ${activeTab==='shipments'?'bg-slate-100 text-slate-900':'text-slate-500 hover:bg-slate-50'}`}>
             <Package size={16}/> Meine Pakete
           </button>
-          <button onClick={()=>setActiveTab('reviews')} className={`w-full text-left p-3 rounded-lg flex items-center gap-3 font-bold text-sm transition ${activeTab==='reviews'?'bg-slate-100 text-slate-900':'text-slate-500 hover:bg-slate-50'}`}>
+          <button onClick={()=>{setActiveTab('reviews'); setMobileMenuOpen(false);}} className={`w-full text-left p-3 rounded-lg flex items-center gap-3 font-bold text-sm transition ${activeTab==='reviews'?'bg-slate-100 text-slate-900':'text-slate-500 hover:bg-slate-50'}`}>
             <Star size={16}/> Bewertungen
           </button>
-          <button onClick={()=>setActiveTab('settings')} className={`w-full text-left p-3 rounded-lg flex items-center gap-3 font-bold text-sm transition ${activeTab==='settings'?'bg-slate-100 text-slate-900':'text-slate-500 hover:bg-slate-50'}`}>
+          <button onClick={()=>{setActiveTab('settings'); setMobileMenuOpen(false);}} className={`w-full text-left p-3 rounded-lg flex items-center gap-3 font-bold text-sm transition ${activeTab==='settings'?'bg-slate-100 text-slate-900':'text-slate-500 hover:bg-slate-50'}`}>
             <Settings size={16}/> Einstellungen
           </button>
         </nav>
@@ -606,6 +673,22 @@ function DashboardContent() {
               incomingRequests.map(req => {
                 const shipment = req.shipments;
                 const senderName = shipment?.profiles?.first_name || "User";
+                
+                // Debug-Logging
+                const currentStatus = shipment?.status || 'pending';
+                const statusLower = currentStatus?.toLowerCase() || 'pending';
+                const isAccepted = statusLower === 'accepted';
+                const isPending = statusLower === 'pending';
+                
+                console.log('DEBUG STATUS:', { 
+                  reqId: req.id, 
+                  shipmentId: shipment?.id,
+                  statusFromDB: currentStatus,
+                  statusLower: statusLower,
+                  isAccepted: isAccepted,
+                  isPending: isPending
+                });
+                
                 return (
                   <div key={req.id} className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
                     <div className="flex justify-between items-start mb-3">
@@ -615,72 +698,92 @@ function DashboardContent() {
                           Von: {senderName} · {shipment?.weight_kg} kg · {shipment?.value_eur}€
                         </div>
                         <div className="mb-2">
-                          {getStatusBadge(shipment?.status || 'pending')}
+                          {getStatusBadge(currentStatus)}
                             </div>
                         </div>
                     </div>
-                    {shipment?.status === 'pending' && (
-                      <div className="flex gap-2 mt-3">
+                    {/* Button Logik - KEIN statischer Text! */}
+                    <div className="flex gap-2 mt-3 flex-wrap">
+                      {/* Toggle Button: IMMER sichtbar */}
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          e.preventDefault();
+                          const tripId = shipment.trip_id;
+                          const senderId = shipment.user_id;
+                          const nextStatus = isAccepted ? 'pending' : 'accepted';
+                          
+                          console.log('DEBUG TOGGLE:', { 
+                            currentStatus, 
+                            statusLower, 
+                            isAccepted, 
+                            nextStatus 
+                          });
+                          
+                          if (tripId && senderId) {
+                            handleToggleAcceptRequest(req.id, shipment.id, tripId, senderId, currentStatus);
+                          }
+                        }}
+                        className={`flex-1 py-3 rounded-lg font-bold text-white flex items-center justify-center gap-2 transition-colors ${
+                          isAccepted 
+                            ? 'bg-orange-500 hover:bg-orange-600' 
+                            : 'bg-green-500 hover:bg-green-600'
+                        }`}
+                      >
+                        {/* Icon Toggle */}
+                        {isAccepted ? (
+                          <Luggage size={20} />
+                        ) : (
+                          <CheckCircle size={20} />
+                        )}
+                        
+                        {/* Text Toggle */}
+                        <span>
+                          {isAccepted ? 'Im Koffer verstaut' : 'Annehmen'}
+                        </span>
+                      </button>
+                      
+                      {/* Ablehnen Button: Nur sichtbar wenn pending */}
+                      {isPending && (
                         <button
-                          onClick={() => {
-                            const tripId = shipment.trip_id;
-                            const senderId = shipment.user_id;
-                            if (tripId && senderId) {
-                              handleAcceptRequest(req.id, shipment.id, tripId, senderId);
-                            }
-                          }}
-                          className="flex-1 bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-lg text-sm transition flex items-center justify-center gap-2"
-                        >
-                          <CheckCircle size={16}/> Akzeptieren
-                        </button>
-                        <button
-                          onClick={() => {
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            e.preventDefault();
                             const senderId = shipment.user_id;
                             if (senderId) {
                               handleRejectRequest(req.id, shipment.id, senderId);
                             }
                           }}
-                          className="flex-1 bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-lg text-sm transition flex items-center justify-center gap-2"
+                          className="flex-1 bg-red-600 hover:bg-red-700 text-white font-bold py-3 rounded-lg text-sm transition flex items-center justify-center gap-2"
                         >
-                          <XCircle size={16}/> Ablehnen
+                          <XCircle size={20}/> Ablehnen
                         </button>
-                        <button
-                          onClick={() => {
-                            const partnerId = shipment.user_id;
-                            const partnerName = senderName;
-                            const convId = req.conversation_id;
-                            if (convId) {
-                              openChat(convId, partnerId, partnerName, shipment.trip_id);
-                            } else {
-                              // Erstelle Conversation falls nicht vorhanden
-                              supabase.from('conversations').insert({ participant1_id: user.id, participant2_id: partnerId }).select().single().then(({ data: newConv }) => {
-                                if (newConv) {
-                                  openChat(newConv.id, partnerId, partnerName, shipment.trip_id);
-                                }
-                              });
-                            }
-                          }}
-                          className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg text-sm transition flex items-center justify-center gap-2"
-                        >
-                          <MessageCircle size={16}/> Chat
-                        </button>
-                      </div>
-                    )}
-                    {shipment?.status !== 'pending' && (
+                      )}
+                      
+                      {/* Chat Button: Immer sichtbar */}
                       <button
-                        onClick={() => {
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          e.preventDefault();
                           const partnerId = shipment.user_id;
                           const partnerName = senderName;
                           const convId = req.conversation_id;
                           if (convId) {
                             openChat(convId, partnerId, partnerName, shipment.trip_id);
+                          } else {
+                            // Erstelle Conversation falls nicht vorhanden
+                            supabase.from('conversations').insert({ participant1_id: user.id, participant2_id: partnerId }).select().single().then(({ data: newConv }) => {
+                              if (newConv) {
+                                openChat(newConv.id, partnerId, partnerName, shipment.trip_id);
+                              }
+                            });
                           }
                         }}
-                        className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg text-sm transition flex items-center justify-center gap-2 mt-3"
+                        className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-lg text-sm transition flex items-center justify-center gap-2"
                       >
-                        <MessageCircle size={16}/> Chat öffnen
+                        <MessageCircle size={20}/> Chat
                       </button>
-                    )}
+                    </div>
                 </div>
                 );
               })

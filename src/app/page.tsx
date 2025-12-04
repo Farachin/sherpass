@@ -395,11 +395,11 @@ function HomeContent() {
       `}</style>
 
       {/* NAVBAR */}
-      <nav className="bg-white border-b border-slate-200 sticky top-0 z-40 h-16 flex items-center justify-between px-4 lg:px-8">
-        <Link href="/" className="flex items-center gap-2 cursor-pointer">
-          <Plane className="text-orange-500" /> <span className="font-black text-xl tracking-tighter">SHERPASS</span>
+      <nav className="bg-white border-b border-slate-200 sticky top-0 z-40 h-16 flex items-center justify-between px-2 sm:px-4 lg:px-8 overflow-x-hidden max-w-full">
+        <Link href="/" className="flex items-center gap-1 sm:gap-2 cursor-pointer flex-shrink-0 min-w-0">
+          <Plane className="text-orange-500 flex-shrink-0" /> <span className="font-black text-lg sm:text-xl tracking-tighter truncate">SHERPASS</span>
         </Link>
-        <div className="flex gap-4 items-center">
+        <div className="flex gap-2 sm:gap-4 items-center flex-shrink-0">
           {/* Desktop: Vollständiger Button mit Text */}
           <button onClick={() => setShowOfferModal(true)} className="hidden sm:flex text-orange-500 font-bold text-sm items-center gap-1 hover:bg-orange-50 px-3 py-2 rounded-full transition">
             <Plus size={16}/> Reise anbieten
@@ -420,8 +420,8 @@ function HomeContent() {
 
       {/* STICKY SEARCH */}
       {scrolled && (
-        <div className="bg-white border-b border-slate-200 p-3 fixed top-16 left-0 w-full z-30 shadow-md animate-in slide-in-from-top-5">
-          <div className="max-w-4xl mx-auto flex gap-2">
+        <div className="bg-white border-b border-slate-200 p-2 sm:p-3 fixed top-16 left-0 w-full z-30 shadow-md animate-in slide-in-from-top-5 overflow-x-hidden max-w-full">
+          <div className="max-w-4xl mx-auto flex gap-1 sm:gap-2 px-2 sm:px-0">
             <input 
               list="airport-cities" 
               value={searchFrom} 
@@ -429,7 +429,7 @@ function HomeContent() {
               onClick={(e) => e.stopPropagation()}
               onFocus={(e) => e.target.focus()}
               placeholder="Von" 
-              className="flex-1 bg-slate-100 rounded-lg px-3 py-2 text-sm font-bold" 
+              className="flex-1 min-w-0 bg-slate-100 rounded-lg px-2 sm:px-3 py-2 text-xs sm:text-sm font-bold" 
             />
             <input 
               list="airport-cities" 
@@ -438,9 +438,18 @@ function HomeContent() {
               onClick={(e) => e.stopPropagation()}
               onFocus={(e) => e.target.focus()}
               placeholder="Nach" 
-              className="flex-1 bg-slate-100 rounded-lg px-3 py-2 text-sm font-bold" 
+              className="flex-1 min-w-0 bg-slate-100 rounded-lg px-2 sm:px-3 py-2 text-xs sm:text-sm font-bold" 
             />
-            <button onClick={performSearch} className="bg-blue-500 text-white font-bold px-4 py-2 rounded-lg text-sm">Suchen</button>
+            <button 
+              onClick={performSearch} 
+              className="bg-blue-500 hover:bg-blue-600 text-white font-bold rounded-lg text-sm flex items-center justify-center flex-shrink-0 transition"
+              style={{ minWidth: '44px' }}
+            >
+              <span className="hidden sm:inline px-3 py-2">Suchen</span>
+              <span className="sm:hidden p-2">
+                <Search size={18} />
+              </span>
+            </button>
           </div>
         </div>
       )}
@@ -448,9 +457,9 @@ function HomeContent() {
       {(
         <>
         {/* HERO SECTION */}
-        <div className="relative min-h-[85vh] flex flex-col justify-center items-center text-center px-4 overflow-hidden bg-slate-900">
+        <div className="relative min-h-[85vh] flex flex-col justify-center items-center text-center px-2 sm:px-4 overflow-x-hidden bg-slate-900">
           <div className="absolute inset-0 opacity-50 bg-[url('https://images.unsplash.com/photo-1436491865332-7a61a109cc05?q=80&w=2074&auto=format&fit=crop')] bg-cover bg-center"></div>
-          <div className="relative z-10 max-w-4xl w-full">
+          <div className="relative z-10 max-w-4xl w-full overflow-x-hidden">
             <h1 className="text-white font-black text-4xl md:text-7xl mb-6 leading-tight drop-shadow-2xl">
               Sende dorthin,<br/>wo die Post nicht hinkommt.
             </h1>
@@ -458,9 +467,9 @@ function HomeContent() {
               Community Logistik ohne Grenzen. Sicher, direkt und persönlich.
             </p>
             
-            <div className="bg-white p-3 rounded-2xl shadow-2xl flex flex-col md:flex-row gap-2 max-w-3xl mx-auto">
-              <div className="flex-1 flex items-center bg-slate-50 rounded-xl px-4 py-3">
-                <div className="w-3 h-3 rounded-full border-2 border-slate-400 mr-3"></div>
+            <div className="bg-white p-2 sm:p-3 rounded-2xl shadow-2xl flex flex-col md:flex-row gap-2 max-w-3xl mx-auto w-full overflow-x-hidden">
+              <div className="flex-1 flex items-center bg-slate-50 rounded-xl px-3 sm:px-4 py-2 sm:py-3 min-w-0">
+                <div className="w-3 h-3 rounded-full border-2 border-slate-400 mr-2 sm:mr-3 flex-shrink-0"></div>
                 <input 
                   list="airport-cities" 
                   value={searchFrom} 
@@ -468,11 +477,11 @@ function HomeContent() {
                   onClick={(e) => e.stopPropagation()}
                   onFocus={(e) => e.target.focus()}
                   placeholder="Von (Stadt)" 
-                  className="bg-transparent w-full font-bold outline-none text-slate-900 placeholder-slate-400 text-lg"
+                  className="bg-transparent w-full font-bold outline-none text-slate-900 placeholder-slate-400 text-sm sm:text-lg min-w-0"
                 />
               </div>
-              <div className="flex-1 flex items-center bg-slate-50 rounded-xl px-4 py-3">
-                <div className="w-3 h-3 rounded-full border-2 border-orange-500 mr-3"></div>
+              <div className="flex-1 flex items-center bg-slate-50 rounded-xl px-3 sm:px-4 py-2 sm:py-3 min-w-0">
+                <div className="w-3 h-3 rounded-full border-2 border-orange-500 mr-2 sm:mr-3 flex-shrink-0"></div>
                 <input 
                   list="airport-cities" 
                   value={searchTo} 
@@ -480,11 +489,16 @@ function HomeContent() {
                   onClick={(e) => e.stopPropagation()}
                   onFocus={(e) => e.target.focus()}
                   placeholder="Nach (Stadt)" 
-                  className="bg-transparent w-full font-bold outline-none text-slate-900 placeholder-slate-400 text-lg"
+                  className="bg-transparent w-full font-bold outline-none text-slate-900 placeholder-slate-400 text-sm sm:text-lg min-w-0"
                 />
               </div>
-              <button onClick={performSearch} className="bg-orange-500 hover:bg-orange-600 text-white font-bold text-lg px-8 py-4 rounded-xl transition shadow-lg flex items-center justify-center gap-2">
-                <Search size={20}/> Suchen
+              <button 
+                onClick={performSearch} 
+                className="bg-orange-500 hover:bg-orange-600 text-white font-bold text-sm sm:text-lg px-4 sm:px-8 py-3 sm:py-4 rounded-xl transition shadow-lg flex items-center justify-center gap-2 flex-shrink-0 w-full md:w-auto"
+              >
+                <Search size={18} className="sm:w-5 sm:h-5"/> 
+                <span className="hidden sm:inline">Suchen</span>
+                <span className="sm:hidden">Suchen</span>
               </button>
             </div>
           </div>
