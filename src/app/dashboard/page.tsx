@@ -1,13 +1,13 @@
 "use client";
 
 import { createClient } from "@/utils/supabase/client";
-import { useEffect, useState } from "react";
+import { useEffect, useState, Suspense } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Plane, Package, Settings, LogOut, Star, ArrowLeft, Trash2, Lock, Mail, ShieldAlert, Bell, CheckCircle, XCircle, Clock, MessageCircle } from "lucide-react";
 import { signOut } from "../auth/actions";
 
-export default function Dashboard() {
+function DashboardContent() {
   const supabase = createClient();
   const searchParams = useSearchParams();
   
@@ -703,6 +703,18 @@ export default function Dashboard() {
         )}
       </main>
     </div>
+  );
+}
+
+export default function Dashboard() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center text-slate-900">
+        <p>Lade Dashboard...</p>
+      </div>
+    }>
+      <DashboardContent />
+    </Suspense>
   );
 }
 
