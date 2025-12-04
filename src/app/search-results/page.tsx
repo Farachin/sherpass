@@ -1,7 +1,7 @@
 "use client";
 
 import { createClient } from "@/utils/supabase/client";
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
@@ -15,7 +15,7 @@ type Trip = {
   origin_country?: string; destination_country?: string;
 };
 
-export default function SearchResults() {
+function SearchResultsContent() {
   const supabase = createClient();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -275,6 +275,18 @@ export default function SearchResults() {
         <option value="London (LHR)" />
       </datalist>
     </div>
+  );
+}
+
+export default function SearchResults() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center text-slate-900">
+        <p>Lade Suchergebnisse...</p>
+      </div>
+    }>
+      <SearchResultsContent />
+    </Suspense>
   );
 }
 

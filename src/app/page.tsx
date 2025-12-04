@@ -1,7 +1,7 @@
 "use client";
 
 import { createClient } from "@/utils/supabase/client";
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, Suspense } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
@@ -22,7 +22,7 @@ type Shipment = {
   id: string; content_desc: string; weight_kg: number; value_eur: number; status: string;
 };
 
-export default function Home() {
+function HomeContent() {
   const supabase = createClient();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -705,5 +705,17 @@ export default function Home() {
       </footer>
 
     </div>
+  );
+}
+
+export default function Home() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center text-slate-900">
+        <p>Lade...</p>
+      </div>
+    }>
+      <HomeContent />
+    </Suspense>
   );
 }
