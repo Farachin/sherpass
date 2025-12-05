@@ -4,7 +4,7 @@ import { createClient } from "@/utils/supabase/client";
 import { useEffect, useState, Suspense, useMemo } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { Plane, Package, Settings, LogOut, Star, ArrowLeft, Trash2, Lock, Mail, ShieldAlert, Bell, CheckCircle, XCircle, Clock, MessageCircle, Menu, X, Luggage, QrCode, Camera } from "lucide-react";
+import { Plane, Package, Settings, LogOut, Star, ArrowLeft, Trash2, Lock, Mail, ShieldAlert, Bell, CheckCircle, XCircle, Clock, MessageCircle, Menu, X, Luggage, QrCode, Camera, Home } from "lucide-react";
 import { signOut } from "../auth/actions";
 import { QRCodeSVG } from "qrcode.react";
 import { BrowserQRCodeReader } from "@zxing/library";
@@ -636,6 +636,15 @@ function DashboardContent() {
         </div>
         
         <nav className="space-y-1 flex-1">
+          {/* Mobile: "Zurück zur Startseite" Link - Ganz oben, optisch abgehoben */}
+          <Link 
+            href="/" 
+            onClick={() => setMobileMenuOpen(false)}
+            className="md:hidden w-full text-left p-3 rounded-lg flex items-center gap-3 font-bold text-sm transition bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 mb-4"
+          >
+            <Home size={16}/> Zurück zur Startseite
+          </Link>
+          
           <button onClick={()=>{setActiveTab('trips'); setMobileMenuOpen(false);}} className={`w-full text-left p-3 rounded-lg flex items-center gap-3 font-bold text-sm transition ${activeTab==='trips'?'bg-slate-100 text-slate-900':'text-slate-500 hover:bg-slate-50'}`}>
             <Plane size={16}/> Meine Reisen
           </button>
@@ -728,7 +737,7 @@ function DashboardContent() {
               )}
             </div>
              </div>
-          <form action={signOut}>
+          <form action={signOut} className="mt-auto pb-24 md:pb-6">
             <button type="submit" className="w-full text-left p-2 text-red-500 font-bold text-xs flex items-center gap-2 hover:bg-red-50 rounded transition">
               <LogOut size={14}/> Ausloggen
             </button>
@@ -923,6 +932,7 @@ function DashboardContent() {
                   const isAccepted = statusLower === 'accepted';
                   const isPending = statusLower === 'pending';
                   const isInTransit = statusLower === 'in_transit';
+                  const isDelivered = statusLower === 'delivered' || statusLower === 'completed';
                   
                   const handleToggle = async () => {
                     const tripId = shipment?.trip_id;
@@ -945,10 +955,16 @@ function DashboardContent() {
                     
                     try {
                       // 2. Dann DB Update
-                      const { error } = await supabase.from('shipments').update({ 
-                        status: nextStatus, 
-                        trip_id: nextStatus === 'accepted' ? tripId : null 
-                      }).eq('id', shipment.id);
+                      // WICHTIG: trip_id NICHT auf null setzen beim Zurücksetzen zu pending
+                      // Der trip_id bleibt erhalten, nur der Status ändert sich
+                      const updateData: any = { status: nextStatus };
+                      // Nur trip_id setzen wenn accepted, sonst nicht ändern (behalten)
+                      if (nextStatus === 'accepted') {
+                        updateData.trip_id = tripId;
+                      }
+                      // delivery_code bleibt erhalten, auch wenn Status zurückgesetzt wird
+                      
+                      const { error } = await supabase.from('shipments').update(updateData).eq('id', shipment.id);
                       
                       if (error) {
                         console.error('DB Update Error:', error);
@@ -1026,90 +1042,101 @@ function DashboardContent() {
                         </div>
                       </div>
                       {/* Button Logik */}
-                      <div className="flex gap-2 mt-3 flex-wrap">
-                        {/* Toggle Button: IMMER sichtbar */}
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            e.preventDefault();
-                            handleToggle();
-                          }}
-                          className={`flex-1 py-3 rounded-lg font-bold text-white flex items-center justify-center gap-2 transition-colors ${
-                            isAccepted 
-                              ? 'bg-orange-500 hover:bg-orange-600' 
-                              : 'bg-green-500 hover:bg-green-600'
-                          }`}
-                        >
-                          {isAccepted ? (
-                            <>
-                              <Luggage size={20} />
-                              <span>Im Koffer verstaut</span>
-                            </>
-                          ) : (
-                            <>
-                              <CheckCircle size={20} />
-                              <span>Annehmen</span>
-                            </>
-                          )}
-                        </button>
-                        
-                        {/* Ablehnen Button: Nur sichtbar wenn pending */}
-                        {isPending && (
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              e.preventDefault();
-                              const senderId = shipment?.user_id;
-                              if (senderId) {
-                                handleRejectRequest(req.id, shipment.id, senderId);
-                              }
-                            }}
-                            className="flex-1 bg-red-600 hover:bg-red-700 text-white font-bold py-3 rounded-lg text-sm transition flex items-center justify-center gap-2"
-                          >
-                            <XCircle size={20}/> Ablehnen
-                          </button>
-                        )}
-                        
-                        {/* QR Scanner Button für Sherpa: Nur wenn accepted oder in_transit */}
-                        {(isAccepted || isInTransit) && (
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              e.preventDefault();
-                              if (shipment?.id) {
-                                startQRScanner(shipment.id);
-                              }
-                            }}
-                            className="flex-1 bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 rounded-lg text-sm transition flex items-center justify-center gap-2"
-                          >
-                            <Camera size={20}/> Lieferung abschließen (Scan)
-                          </button>
-                        )}
-                        
-                        {/* Chat Button: Immer sichtbar */}
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            e.preventDefault();
-                            const partnerId = shipment?.user_id;
-                            const partnerName = senderName;
-                            const convId = req.conversation_id;
-                            if (convId) {
-                              openChat(convId, partnerId, partnerName, shipment?.trip_id);
-                            } else {
-                              // Erstelle Conversation falls nicht vorhanden
-                              supabase.from('conversations').insert({ participant1_id: user.id, participant2_id: partnerId }).select().single().then(({ data: newConv }) => {
-                                if (newConv) {
-                                  openChat(newConv.id, partnerId, partnerName, shipment?.trip_id);
-                                }
-                              });
-                            }
-                          }}
-                          className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-lg text-sm transition flex items-center justify-center gap-2"
-                        >
-                          <MessageCircle size={20}/> Chat
-                        </button>
+                      {isDelivered ? (
+                        // Status-Badge für erfolgreich übergebene Pakete
+                        <div className="mt-3 p-4 bg-green-100 border-2 border-green-500 rounded-lg text-center">
+                          <div className="flex items-center justify-center gap-2 mb-2">
+                            <CheckCircle size={24} className="text-green-600" />
+                            <span className="font-bold text-green-700 text-lg">Erfolgreich übergeben</span>
+                          </div>
+                          <p className="text-sm text-green-600">Das Paket wurde erfolgreich an den Empfänger übergeben.</p>
                         </div>
+                      ) : (
+                        <div className="flex gap-2 mt-3 flex-wrap">
+                          {/* Toggle Button: Nur sichtbar wenn nicht delivered */}
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              e.preventDefault();
+                              handleToggle();
+                            }}
+                            className={`flex-1 py-3 rounded-lg font-bold text-white flex items-center justify-center gap-2 transition-colors ${
+                              isAccepted 
+                                ? 'bg-orange-500 hover:bg-orange-600' 
+                                : 'bg-green-500 hover:bg-green-600'
+                            }`}
+                          >
+                            {isAccepted ? (
+                              <>
+                                <Luggage size={20} />
+                                <span>Im Koffer verstaut</span>
+                              </>
+                            ) : (
+                              <>
+                                <CheckCircle size={20} />
+                                <span>Annehmen</span>
+                              </>
+                            )}
+                          </button>
+                          
+                          {/* Ablehnen Button: Nur sichtbar wenn pending */}
+                          {isPending && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                e.preventDefault();
+                                const senderId = shipment?.user_id;
+                                if (senderId) {
+                                  handleRejectRequest(req.id, shipment.id, senderId);
+                                }
+                              }}
+                              className="flex-1 bg-red-600 hover:bg-red-700 text-white font-bold py-3 rounded-lg text-sm transition flex items-center justify-center gap-2"
+                            >
+                              <XCircle size={20}/> Ablehnen
+                            </button>
+                          )}
+                          
+                          {/* QR Scanner Button für Sherpa: Nur wenn accepted oder in_transit */}
+                          {(isAccepted || isInTransit) && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                e.preventDefault();
+                                if (shipment?.id) {
+                                  startQRScanner(shipment.id);
+                                }
+                              }}
+                              className="flex-1 bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 rounded-lg text-sm transition flex items-center justify-center gap-2"
+                            >
+                              <Camera size={20}/> Lieferung abschließen (Scan)
+                            </button>
+                          )}
+                          
+                          {/* Chat Button: Immer sichtbar */}
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              e.preventDefault();
+                              const partnerId = shipment?.user_id;
+                              const partnerName = senderName;
+                              const convId = req.conversation_id;
+                              if (convId) {
+                                openChat(convId, partnerId, partnerName, shipment?.trip_id);
+                              } else {
+                                // Erstelle Conversation falls nicht vorhanden
+                                supabase.from('conversations').insert({ participant1_id: user.id, participant2_id: partnerId }).select().single().then(({ data: newConv }) => {
+                                  if (newConv) {
+                                    openChat(newConv.id, partnerId, partnerName, shipment?.trip_id);
+                                  }
+                                });
+                              }
+                            }}
+                            className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-lg text-sm transition flex items-center justify-center gap-2"
+                          >
+                            <MessageCircle size={20}/> Chat
+                          </button>
+                        </div>
+                      )}
                     </div>
                   );
                 };

@@ -960,13 +960,40 @@ function HomeContent() {
                       </div>
                       </div>
                             {(() => {
+                              // Prüfe Status
+                              const statusLower = (shipment.status || 'pending').toLowerCase();
+                              const isDelivered = statusLower === 'delivered' || statusLower === 'completed';
+                              const isAccepted = statusLower === 'accepted';
+                              const isPending = statusLower === 'pending';
+                              
+                              // Wenn delivered: Zeige Status-Badge statt Button
+                              if (isDelivered) {
+                                return (
+                                  <div className="mt-3 p-3 bg-green-100 border-2 border-green-500 rounded-lg text-center">
+                                    <div className="flex items-center justify-center gap-2 mb-1">
+                                      <CheckCircle size={16} className="text-green-600" />
+                                      <span className="font-bold text-green-700 text-sm">Erfolgreich übergeben</span>
+                                    </div>
+                                    <p className="text-xs text-green-600">Das Paket wurde erfolgreich an den Empfänger übergeben.</p>
+                                  </div>
+                                );
+                              }
+                              
+                              // Wenn accepted: Zeige Status-Badge
+                              if (isAccepted) {
+                                return (
+                                  <div className="mt-2 bg-green-100 text-green-800 text-xs font-bold px-2 py-1 rounded flex items-center gap-1 border border-green-200">
+                                    <CheckCircle size={12}/> Akzeptiert
+                                  </div>
+                                );
+                              }
+                              
                               // WICHTIG: Zeige "Annehmen"-Button nur, wenn:
                               // 1. Ich bin der Besitzer der Reise (currentUserId === shipment.trip.user_id)
                               // 2. Der Status ist pending
-                              // 3. Die Nachricht wurde nicht von mir gesendet (optional, aber sicherheitshalber)
+                              // 3. Die Nachricht wurde nicht von mir gesendet
                               const trip = shipment.trips || shipment.trip;
                               const isTripOwner = trip && trip.user_id === currentUserId;
-                              const isPending = shipment.status === 'pending' || shipment.status?.toLowerCase() === 'pending';
                               const isNotMyMessage = msg.sender_id !== currentUserId;
                               
                               if (isTripOwner && isPending && isNotMyMessage) {
@@ -981,9 +1008,6 @@ function HomeContent() {
                               }
                               return null;
                             })()}
-                            {shipment.status === 'accepted' && (
-                              <div className="mt-2 bg-green-100 text-green-800 text-xs font-bold px-2 py-1 rounded flex items-center gap-1 border border-green-200"><CheckCircle size={12}/> Akzeptiert</div>
-                            )}
                           </>
                         );
                       })()}
