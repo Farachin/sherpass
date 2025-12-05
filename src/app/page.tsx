@@ -94,8 +94,8 @@ function HomeContent() {
     });
     
     return () => {
-      subscription.unsubscribe();
-      window.removeEventListener('scroll', handleScroll);
+        subscription.unsubscribe();
+        window.removeEventListener('scroll', handleScroll);
     };
   }, []);
 
@@ -119,9 +119,70 @@ function HomeContent() {
       
       // Lade Nachrichten
       const loadChatMessages = async (cId: string) => {
-        const { data } = await supabase.from('messages').select('*, shipments(*)').eq('conversation_id', cId).order('created_at', {ascending: true});
-        if(data) {
-          setChatMessages(data);
+        // WICHTIG: Lade Nachrichten und ihre Shipments
+        // Verwende shipments(*) um alle Shipments zu laden, dann filtern wir manuell nach shipment_id
+        const { data, error } = await supabase
+          .from('messages')
+          .select('*, shipments(*)')
+          .eq('conversation_id', cId)
+          .order('created_at', {ascending: true});
+        
+        if (error) {
+          console.error("Fehler beim Laden der Chat-Nachrichten:", error);
+          return;
+        }
+        
+        if (data) {
+          // WICHTIG: Für jede Nachricht nur das Shipment mit der passenden shipment_id verwenden
+          let processedData = data.map(msg => {
+            if (msg.type === 'booking_request' && msg.shipment_id) {
+              // Finde das Shipment mit der passenden ID
+              let shipment = null;
+              if (Array.isArray(msg.shipments)) {
+                shipment = msg.shipments.find((s: any) => s.id === msg.shipment_id) || null;
+              } else if (msg.shipments && msg.shipments.id === msg.shipment_id) {
+                shipment = msg.shipments;
+              }
+              
+              // Zusätzliche Validierung: Prüfe trip_id wenn tripIdParam vorhanden
+              if (tripIdParam && shipment && shipment.trip_id !== tripIdParam) {
+                console.warn("DEBUG: Shipment trip_id stimmt nicht überein:", {
+                  msgId: msg.id,
+                  shipmentId: shipment.id,
+                  shipmentTripId: shipment.trip_id,
+                  expectedTripId: tripIdParam
+                });
+                return { ...msg, shipments: null };
+              }
+              
+              return { ...msg, shipments: shipment };
+            }
+            return msg;
+          });
+          
+          // Zusätzliche Filterung: Wenn tripIdParam vorhanden ist, filtere nach trip_id
+          if (tripIdParam) {
+            console.log("DEBUG: Filtere Chat-Nachrichten nach trip_id:", tripIdParam);
+            processedData = processedData.map(msg => {
+              // Für booking_request Nachrichten: Prüfe ob shipment.trip_id übereinstimmt
+              if (msg.type === 'booking_request' && msg.shipments) {
+                const shipment = Array.isArray(msg.shipments) ? msg.shipments[0] : msg.shipments;
+                if (shipment && shipment.trip_id !== tripIdParam) {
+                  console.warn("DEBUG: Shipment trip_id stimmt nicht überein (zweite Prüfung):", {
+                    msgId: msg.id,
+                    shipmentId: shipment.id,
+                    shipmentTripId: shipment.trip_id,
+                    expectedTripId: tripIdParam
+                  });
+                  // Entferne das falsche Shipment
+                  return { ...msg, shipments: null };
+                }
+              }
+              return msg;
+            });
+          }
+          
+          setChatMessages(processedData);
           setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
         }
       };
@@ -154,7 +215,7 @@ function HomeContent() {
         if (payload.new.type === 'booking_request') {
           loadMessages(activeConvId);
         } else {
-          setChatMessages(prev => {
+             setChatMessages(prev => {
             // Prüfen ob Nachricht schon vorhanden (optimistic update oder bereits geladen)
             const exists = prev.find(m => m.id === payload.new.id || (m.id?.toString().startsWith('temp-') && m.sender_id === payload.new.sender_id && m.content === payload.new.content));
             if (exists) {
@@ -165,9 +226,9 @@ function HomeContent() {
                   : m
               ).filter((m, idx, arr) => arr.findIndex(msg => msg.id === m.id) === idx); // Entferne Duplikate
             }
-            return [...prev, payload.new];
-          });
-          setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
+                return [...prev, payload.new];
+             });
+             setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
         }
       })
       .subscribe();
@@ -181,16 +242,16 @@ function HomeContent() {
         .from("trips")
         .select("*")
         .gte("date", new Date().toISOString().split('T')[0])
-        .order("date", { ascending: true })
-        .limit(50);
+      .order("date", { ascending: true })
+      .limit(50);
 
-      if (error) {
+    if (error) {
         console.error("DB Error:", error.message);
         setTeaserTrips([]);
       } else {
         if (data && data.length > 0) {
           setTeaserTrips(data.slice(0, 3) as any);
-        } else {
+    } else {
           setTeaserTrips([]);
         }
       }
@@ -222,10 +283,89 @@ function HomeContent() {
   };
 
   const loadMessages = async (cId: string) => {
-    const { data } = await supabase.from('messages').select('*, shipments(*)').eq('conversation_id', cId).order('created_at', {ascending: true});
-    if(data) {
-      setChatMessages(data);
-      setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
+    // WICHTIG: Lade nur das spezifische Shipment für jede Nachricht (über shipment_id Foreign Key)
+    // Der Query verwendet shipments!inner(*) um nur Shipments zu laden, die mit der Nachricht verknüpft sind
+    const { data, error } = await supabase
+      .from('messages')
+      .select(`
+        *,
+        shipments!messages_shipment_id_fkey(*)
+      `)
+      .eq('conversation_id', cId)
+      .order('created_at', {ascending: true});
+    
+    if (error) {
+      console.error("Fehler beim Laden der Nachrichten:", error);
+      // Fallback: Versuche ohne explizite Foreign Key Relation
+      const { data: fallbackData, error: fallbackError } = await supabase
+        .from('messages')
+        .select('*, shipments(*)')
+        .eq('conversation_id', cId)
+        .order('created_at', {ascending: true});
+      
+      if (fallbackError) {
+        console.error("Fallback Query Fehler:", fallbackError);
+        return;
+      }
+      
+      if (fallbackData) {
+        // Manuelle Filterung: Nur das Shipment mit der passenden shipment_id
+        const processedData = fallbackData.map(msg => {
+          if (msg.type === 'booking_request' && msg.shipment_id) {
+            // Finde das Shipment mit der passenden ID
+            const shipment = Array.isArray(msg.shipments) 
+              ? msg.shipments.find((s: any) => s.id === msg.shipment_id)
+              : (msg.shipments?.id === msg.shipment_id ? msg.shipments : null);
+            
+            // Zusätzliche Validierung: Prüfe trip_id wenn contextTripId vorhanden
+            if (contextTripId && shipment && shipment.trip_id !== contextTripId) {
+              console.warn("DEBUG: Shipment trip_id stimmt nicht überein:", {
+                msgId: msg.id,
+                shipmentId: shipment.id,
+                shipmentTripId: shipment.trip_id,
+                contextTripId: contextTripId
+              });
+              return { ...msg, shipments: null };
+            }
+            
+            return { ...msg, shipments: shipment || null };
+          }
+          return msg;
+        });
+        
+        setChatMessages(processedData);
+        setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
+      }
+      return;
+    }
+    
+    if (data) {
+      // Zusätzliche Filterung: Wenn contextTripId vorhanden ist, filtere nach trip_id
+      let filteredData = data;
+      
+      if (contextTripId) {
+        console.log("DEBUG: Filtere Nachrichten nach trip_id:", contextTripId);
+        filteredData = data.map(msg => {
+          // Für booking_request Nachrichten: Prüfe ob shipment.trip_id übereinstimmt
+          if (msg.type === 'booking_request' && msg.shipments) {
+            const shipment = Array.isArray(msg.shipments) ? msg.shipments[0] : msg.shipments;
+            if (shipment && shipment.trip_id !== contextTripId) {
+              console.warn("DEBUG: Shipment trip_id stimmt nicht überein:", {
+                msgId: msg.id,
+                shipmentId: shipment.id,
+                shipmentTripId: shipment.trip_id,
+                contextTripId: contextTripId
+              });
+              // Entferne das falsche Shipment
+              return { ...msg, shipments: null };
+            }
+          }
+          return msg;
+        });
+      }
+      
+      setChatMessages(filteredData);
+        setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
     }
   }
 
@@ -343,46 +483,169 @@ function HomeContent() {
 
   // --- SAVE ---
   const saveManifest = async () => {
-    if(!manifestInput || !weight || !currentUserId) return alert("Fehlt was.");
-    const { data: newShipment, error } = await supabase.from("shipments").insert([{
-      user_id: currentUserId, content_desc: manifestInput, weight_kg: Number(weight), value_eur: Number(value || 0), sender_name: "User", status: "pending"
-    }]).select().single();
-    
-    if(!error && newShipment && activeConvId) {
-      // Automatisch als Buchungsanfrage in den Chat posten
-      await supabase.from('messages').insert({ 
-        conversation_id: activeConvId, 
-        sender_id: currentUserId, 
-        content: "Anfrage senden...", 
-        type: 'booking_request', 
-        shipment_id: newShipment.id 
-      });
-      // Nachrichten neu laden
-      loadMessages(activeConvId);
+    if(!manifestInput || !weight || !currentUserId) {
+      alert("Bitte alle Felder ausfüllen!");
+      return;
     }
+
+    const weightNum = Number(weight);
+    const valueNum = Number(value || 0);
     
-    if(!error) {
+    if (isNaN(weightNum) || weightNum <= 0) {
+      alert("Bitte gültiges Gewicht eingeben!");
+      return;
+    }
+
+    try {
+      // Lade Profil für sender_name
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("first_name")
+        .eq("id", currentUserId)
+        .single();
+      
+      const senderName = profile?.first_name || "User";
+      
+      // Erstelle Shipment mit trip_id, falls verfügbar
+      const shipmentData: any = {
+        user_id: currentUserId,
+        content_desc: manifestInput.trim(),
+        weight_kg: weightNum,
+        value_eur: valueNum,
+        sender_name: senderName,
+        status: "pending"
+      };
+      
+      // WICHTIG: trip_id hinzufügen, wenn verfügbar (aus contextTripId)
+      if (contextTripId) {
+        shipmentData.trip_id = contextTripId;
+        console.log("DEBUG: Shipment wird mit trip_id erstellt:", contextTripId);
+      } else {
+        console.warn("DEBUG: Keine trip_id verfügbar - Shipment wird ohne trip_id erstellt");
+      }
+      
+      const { data: newShipment, error } = await supabase
+        .from("shipments")
+        .insert([shipmentData])
+        .select()
+        .single();
+      
+      if (error) {
+        console.error("Fehler beim Erstellen des Shipments:", error);
+        alert("Fehler beim Erstellen: " + error.message);
+        return;
+      }
+      
+      if (!newShipment) {
+        alert("Fehler: Shipment wurde nicht erstellt");
+        return;
+      }
+      
+      console.log("DEBUG: Shipment erstellt:", { 
+        id: newShipment.id, 
+        trip_id: newShipment.trip_id,
+        content_desc: newShipment.content_desc 
+      });
+      
+      // Automatisch als Buchungsanfrage in den Chat posten, wenn Chat aktiv
+      if (activeConvId && newShipment) {
+        const { error: msgError } = await supabase.from('messages').insert({ 
+          conversation_id: activeConvId, 
+          sender_id: currentUserId, 
+          content: "Anfrage senden...", 
+          type: 'booking_request', 
+          shipment_id: newShipment.id 
+        });
+        
+        if (msgError) {
+          console.error("Fehler beim Erstellen der Nachricht:", msgError);
+        } else {
+          // Nachrichten neu laden
+          loadMessages(activeConvId);
+        }
+      }
+      
       alert("Paket erstellt" + (activeConvId ? " und Anfrage gesendet!" : "!"));
       setShowManifestModal(false);
       setManifestInput("");
       setWeight("");
       setValue("");
-      if(currentUserId) loadMyShipments(currentUserId);
-    } else {
-      alert("Fehler beim Erstellen: " + error.message);
+      
+      if(currentUserId) {
+        loadMyShipments(currentUserId);
+      }
+    } catch (err: any) {
+      console.error("Unerwarteter Fehler beim Erstellen des Pakets:", err);
+      alert("Ein Fehler ist aufgetreten: " + (err.message || "Unbekannter Fehler"));
     }
   };
 
   const submitOffer = async () => {
-    if (!currentUserId) return alert("Einloggen!");
-    const { data: profile } = await supabase.from("profiles").select("first_name").eq("id", currentUserId).single();
+    if (!currentUserId) {
+      alert("Bitte einloggen!");
+      return;
+    }
+
+    // Validierung
+    if (!offerOrigin || !offerDest || !offerDate || !offerWeight) {
+      alert("Bitte alle Felder ausfüllen!");
+      return;
+    }
+
+    const weightNum = Number(offerWeight);
+    if (isNaN(weightNum) || weightNum <= 0) {
+      alert("Bitte gültiges Gewicht eingeben!");
+      return;
+    }
+
+    try {
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("first_name")
+        .eq("id", currentUserId)
+        .single();
+      
     const name = profile?.first_name || "Sherpa";
-    await supabase.from("trips").insert({
-      user_id: currentUserId, origin: offerOrigin, destination: offerDest, date: offerDate, 
-      capacity_kg: Number(offerWeight), sherpa_name: name, description: offerDesc,
-      origin_country: getCountryForCity(offerOrigin), destination_country: getCountryForCity(offerDest)
-    });
-    alert("Reise online!"); setShowOfferModal(false); fetchInitialTrips();
+      
+      const { data, error } = await supabase
+        .from("trips")
+        .insert({
+          user_id: currentUserId,
+          origin: offerOrigin.trim(),
+          destination: offerDest.trim(),
+          date: offerDate,
+          capacity_kg: weightNum,
+          sherpa_name: name,
+          description: offerDesc?.trim() || null,
+          origin_country: getCountryForCity(offerOrigin),
+          destination_country: getCountryForCity(offerDest),
+          price_eur: null // Optional, kann später hinzugefügt werden
+        })
+        .select()
+        .single();
+
+      if (error) {
+        console.error("Fehler beim Erstellen der Reise:", error);
+        alert("Fehler beim Erstellen der Reise: " + error.message);
+        return;
+      }
+
+      if (data) {
+        alert("Reise erfolgreich erstellt!");
+        setShowOfferModal(false);
+        // Formular zurücksetzen
+        setOfferOrigin("");
+        setOfferDest("");
+        setOfferDate("");
+        setOfferWeight("");
+        setOfferDesc("");
+        // Trips neu laden
+        fetchInitialTrips();
+      }
+    } catch (err: any) {
+      console.error("Unerwarteter Fehler:", err);
+      alert("Ein Fehler ist aufgetreten: " + (err.message || "Unbekannter Fehler"));
+    }
   };
 
   return (
@@ -412,7 +675,7 @@ function HomeContent() {
             <Link href="/login" className="bg-slate-100 hover:bg-slate-200 p-2 rounded-full"><User size={20}/></Link>
           ) : (
             <Link href="/dashboard" className="bg-slate-900 text-white w-9 h-9 rounded-full flex items-center justify-center font-bold text-xs hover:bg-orange-500 transition">
-              {userEmail.charAt(0).toUpperCase()}
+                 {userEmail.charAt(0).toUpperCase()}
             </Link>
           )}
         </div>
@@ -458,15 +721,15 @@ function HomeContent() {
         <>
         {/* HERO SECTION */}
         <div className="relative min-h-[85vh] flex flex-col justify-center items-center text-center px-2 sm:px-4 overflow-x-hidden bg-slate-900">
-          <div className="absolute inset-0 opacity-50 bg-[url('https://images.unsplash.com/photo-1436491865332-7a61a109cc05?q=80&w=2074&auto=format&fit=crop')] bg-cover bg-center"></div>
+           <div className="absolute inset-0 opacity-50 bg-[url('https://images.unsplash.com/photo-1436491865332-7a61a109cc05?q=80&w=2074&auto=format&fit=crop')] bg-cover bg-center"></div>
           <div className="relative z-10 max-w-4xl w-full overflow-x-hidden">
-            <h1 className="text-white font-black text-4xl md:text-7xl mb-6 leading-tight drop-shadow-2xl">
-              Sende dorthin,<br/>wo die Post nicht hinkommt.
-            </h1>
-            <p className="text-slate-200 text-lg md:text-xl mb-12 drop-shadow-md font-medium max-w-2xl mx-auto">
-              Community Logistik ohne Grenzen. Sicher, direkt und persönlich.
-            </p>
-            
+              <h1 className="text-white font-black text-4xl md:text-7xl mb-6 leading-tight drop-shadow-2xl">
+                Sende dorthin,<br/>wo die Post nicht hinkommt.
+              </h1>
+              <p className="text-slate-200 text-lg md:text-xl mb-12 drop-shadow-md font-medium max-w-2xl mx-auto">
+                Community Logistik ohne Grenzen. Sicher, direkt und persönlich.
+              </p>
+              
             <div className="bg-white p-2 sm:p-3 rounded-2xl shadow-2xl flex flex-col md:flex-row gap-2 max-w-3xl mx-auto w-full overflow-x-hidden">
               <div className="flex-1 flex items-center bg-slate-50 rounded-xl px-3 sm:px-4 py-2 sm:py-3 min-w-0">
                 <div className="w-3 h-3 rounded-full border-2 border-slate-400 mr-2 sm:mr-3 flex-shrink-0"></div>
@@ -479,7 +742,7 @@ function HomeContent() {
                   placeholder="Von (Stadt)" 
                   className="bg-transparent w-full font-bold outline-none text-slate-900 placeholder-slate-400 text-sm sm:text-lg min-w-0"
                 />
-              </div>
+                </div>
               <div className="flex-1 flex items-center bg-slate-50 rounded-xl px-3 sm:px-4 py-2 sm:py-3 min-w-0">
                 <div className="w-3 h-3 rounded-full border-2 border-orange-500 mr-2 sm:mr-3 flex-shrink-0"></div>
                 <input 
@@ -491,7 +754,7 @@ function HomeContent() {
                   placeholder="Nach (Stadt)" 
                   className="bg-transparent w-full font-bold outline-none text-slate-900 placeholder-slate-400 text-sm sm:text-lg min-w-0"
                 />
-              </div>
+                </div>
               <button 
                 onClick={performSearch} 
                 className="bg-orange-500 hover:bg-orange-600 text-white font-bold text-sm sm:text-lg px-4 sm:px-8 py-3 sm:py-4 rounded-xl transition shadow-lg flex items-center justify-center gap-2 flex-shrink-0 w-full md:w-auto"
@@ -500,18 +763,18 @@ function HomeContent() {
                 <span className="hidden sm:inline">Suchen</span>
                 <span className="sm:hidden">Suchen</span>
               </button>
-            </div>
-          </div>
+              </div>
+           </div>
         </div>
 
         {/* TICKER */}
         <div className="bg-slate-900 text-white py-3 border-y border-slate-800 overflow-hidden">
-          <div className="ticker text-sm font-mono flex whitespace-nowrap">
-            <span className="mx-4 text-orange-500">●</span> Ahmad: Hamburg ➔ Kabul <span className="mx-4 text-orange-500">●</span> Maria: Berlin ➔ Teheran <span className="mx-4 text-orange-500">●</span> Jean: Paris ➔ Bamako <span className="mx-4 text-orange-500">●</span> Ali: Frankfurt ➔ Mazar-i-Sharif
-            <span className="mx-4 text-orange-500">●</span> Lisa: München ➔ Dubai <span className="mx-4 text-orange-500">●</span> Karim: London ➔ Islamabad <span className="mx-4 text-orange-500">●</span> Sarah: Köln ➔ Istanbul
-            <span className="mx-4 text-orange-500">●</span> Ahmad: Hamburg ➔ Kabul <span className="mx-4 text-orange-500">●</span> Maria: Berlin ➔ Teheran <span className="mx-4 text-orange-500">●</span> Jean: Paris ➔ Bamako <span className="mx-4 text-orange-500">●</span> Ali: Frankfurt ➔ Mazar-i-Sharif
-            <span className="mx-4 text-orange-500">●</span> Lisa: München ➔ Dubai <span className="mx-4 text-orange-500">●</span> Karim: London ➔ Islamabad <span className="mx-4 text-orange-500">●</span> Sarah: Köln ➔ Istanbul
-          </div>
+            <div className="ticker text-sm font-mono flex whitespace-nowrap">
+                <span className="mx-4 text-orange-500">●</span> Ahmad: Hamburg ➔ Kabul <span className="mx-4 text-orange-500">●</span> Maria: Berlin ➔ Teheran <span className="mx-4 text-orange-500">●</span> Jean: Paris ➔ Bamako <span className="mx-4 text-orange-500">●</span> Ali: Frankfurt ➔ Mazar-i-Sharif
+                <span className="mx-4 text-orange-500">●</span> Lisa: München ➔ Dubai <span className="mx-4 text-orange-500">●</span> Karim: London ➔ Islamabad <span className="mx-4 text-orange-500">●</span> Sarah: Köln ➔ Istanbul
+                <span className="mx-4 text-orange-500">●</span> Ahmad: Hamburg ➔ Kabul <span className="mx-4 text-orange-500">●</span> Maria: Berlin ➔ Teheran <span className="mx-4 text-orange-500">●</span> Jean: Paris ➔ Bamako <span className="mx-4 text-orange-500">●</span> Ali: Frankfurt ➔ Mazar-i-Sharif
+                <span className="mx-4 text-orange-500">●</span> Lisa: München ➔ Dubai <span className="mx-4 text-orange-500">●</span> Karim: London ➔ Islamabad <span className="mx-4 text-orange-500">●</span> Sarah: Köln ➔ Istanbul
+            </div>
         </div>
 
         {/* BENEFITS SECTION */}
@@ -520,22 +783,22 @@ function HomeContent() {
           <p className="text-slate-500 mb-12">Klassischer Versand vs. Community Power.</p>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
             <div className="bg-white rounded-3xl p-8 border border-slate-100 shadow-lg">
-              <h3 className="text-2xl font-bold text-slate-900 mb-4">Schneller</h3>
-              <p className="text-slate-600 mb-4 text-sm leading-relaxed">DHL braucht Wochen nach Afghanistan oder Mali. Ein Sherpa nimmt den Direktflug.</p>
-              <div className="flex justify-center items-center gap-2 font-bold text-sm text-green-600">✓ Ankunft in 24-48h</div>
+                <h3 className="text-2xl font-bold text-slate-900 mb-4">Schneller</h3>
+                <p className="text-slate-600 mb-4 text-sm leading-relaxed">DHL braucht Wochen nach Afghanistan oder Mali. Ein Sherpa nimmt den Direktflug.</p>
+                <div className="flex justify-center items-center gap-2 font-bold text-sm text-green-600">✓ Ankunft in 24-48h</div>
             </div>
             <div className="bg-white rounded-3xl p-8 border border-slate-100 shadow-lg">
-              <h3 className="text-2xl font-bold text-slate-900 mb-4">Sicherer</h3>
-              <p className="text-slate-600 mb-4 text-sm leading-relaxed">Kein anonymes Verteilerzentrum. Persönliche Übergabe (Hand-to-Hand).</p>
-              <div className="flex flex-col gap-2 items-center font-bold text-sm text-orange-500">
-                <span>✓ Verifizierte Reisende</span>
-                <span>✓ Live-Manifest Check</span>
-              </div>
+                <h3 className="text-2xl font-bold text-slate-900 mb-4">Sicherer</h3>
+                <p className="text-slate-600 mb-4 text-sm leading-relaxed">Kein anonymes Verteilerzentrum. Persönliche Übergabe (Hand-to-Hand).</p>
+                <div className="flex flex-col gap-2 items-center font-bold text-sm text-orange-500">
+                    <span>✓ Verifizierte Reisende</span>
+                    <span>✓ Live-Manifest Check</span>
+                </div>
             </div>
             <div className="bg-white rounded-3xl p-8 border border-slate-100 shadow-lg">
-              <h3 className="text-2xl font-bold text-slate-900 mb-4">Kostenlos</h3>
-              <p className="text-slate-600 mb-4 text-sm leading-relaxed">Sherpass nimmt 0% Provision. Ihr einigt euch selbst auf den Preis.</p>
-              <div className="flex justify-center items-center gap-2 font-bold text-sm text-slate-900">✓ 100% Dein Geld</div>
+                <h3 className="text-2xl font-bold text-slate-900 mb-4">Kostenlos</h3>
+                <p className="text-slate-600 mb-4 text-sm leading-relaxed">Sherpass nimmt 0% Provision. Ihr einigt euch selbst auf den Preis.</p>
+                <div className="flex justify-center items-center gap-2 font-bold text-sm text-slate-900">✓ 100% Dein Geld</div>
             </div>
           </div>
         </div>
@@ -544,49 +807,49 @@ function HomeContent() {
 
         {/* TEASER TRIPS */}
         <div className="bg-slate-50 py-20 border-y border-slate-200">
-          <div className="max-w-4xl mx-auto px-4">
-            <h2 className="text-xl font-black mb-8 flex items-center gap-2"><Zap className="text-orange-500"/> Beliebte Verbindungen</h2>
-            <div className="grid md:grid-cols-3 gap-4">
-              {teaserTrips.length > 0 ? teaserTrips.map(trip => (
+            <div className="max-w-4xl mx-auto px-4">
+                <h2 className="text-xl font-black mb-8 flex items-center gap-2"><Zap className="text-orange-500"/> Beliebte Verbindungen</h2>
+                <div className="grid md:grid-cols-3 gap-4">
+                    {teaserTrips.length > 0 ? teaserTrips.map(trip => (
                 <div key={trip.id} onClick={() => router.push(`/trip/${trip.id}`)} className="bg-white p-5 rounded-xl border border-slate-200 hover:border-orange-300 cursor-pointer flex flex-col justify-between group transition shadow-sm h-32">
-                  <div className="font-bold text-slate-700 text-lg">
-                    {trip.origin} <span className="text-orange-500">➔</span> {trip.destination}
-                  </div>
-                  <div className="flex justify-between items-center text-xs text-slate-500 font-medium">
-                    <span>{new Date(trip.date).toLocaleDateString()}</span>
-                    <span className="bg-slate-100 px-2 py-1 rounded font-bold text-slate-700">{trip.capacity_kg} kg frei</span>
-                  </div>
+                            <div className="font-bold text-slate-700 text-lg">
+                                {trip.origin} <span className="text-orange-500">➔</span> {trip.destination}
+                            </div>
+                            <div className="flex justify-between items-center text-xs text-slate-500 font-medium">
+                                <span>{new Date(trip.date).toLocaleDateString()}</span>
+                                <span className="bg-slate-100 px-2 py-1 rounded font-bold text-slate-700">{trip.capacity_kg} kg frei</span>
+                            </div>
+                        </div>
+                    )) : <p className="text-sm text-slate-400 col-span-3">Lade Reisen...</p>}
                 </div>
-              )) : <p className="text-sm text-slate-400 col-span-3">Lade Reisen...</p>}
             </div>
-          </div>
         </div>
 
         {/* HOW IT WORKS */}
         <div className="max-w-5xl mx-auto px-4 py-20">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-12 text-center md:text-left">
-            <div className="flex flex-col items-center md:items-start">
-              <div className="w-14 h-14 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mb-4 mx-auto md:mx-0">
-                <Search size={28} />
-              </div>
-              <h3 className="font-bold text-xl mb-2">Finde einen Sherpa</h3>
-              <p className="text-sm text-slate-500 leading-relaxed">Nutze die Suche, um Reisende auf deiner Route zu finden. Schau dir ihre Profile und Bewertungen an.</p>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-12 text-center md:text-left">
+                <div className="flex flex-col items-center md:items-start">
+                    <div className="w-14 h-14 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mb-4 mx-auto md:mx-0">
+                        <Search size={28} />
+                    </div>
+                    <h3 className="font-bold text-xl mb-2">Finde einen Sherpa</h3>
+                    <p className="text-sm text-slate-500 leading-relaxed">Nutze die Suche, um Reisende auf deiner Route zu finden. Schau dir ihre Profile und Bewertungen an.</p>
+                </div>
+                <div className="flex flex-col items-center md:items-start">
+                    <div className="w-14 h-14 bg-orange-100 text-orange-600 rounded-full flex items-center justify-center mb-4 mx-auto md:mx-0">
+                        <Package size={28} />
+                    </div>
+                    <h3 className="font-bold text-xl mb-2">Erstelle ein Paket</h3>
+                    <p className="text-sm text-slate-500 leading-relaxed">Beschreibe den Inhalt deiner Sendung. Mit 100% Community Trust.</p>
+                </div>
+                <div className="flex flex-col items-center md:items-start">
+                    <div className="w-14 h-14 bg-green-100 text-green-600 rounded-full flex items-center justify-center mb-4 mx-auto md:mx-0">
+                        <QrCode size={28} />
+                    </div>
+                    <h3 className="font-bold text-xl mb-2">Sichere Übergabe</h3>
+                    <p className="text-sm text-slate-500 leading-relaxed">Digitaler Handshake und Tracking für maximale Sicherheit bei der Übergabe.</p>
+                </div>
             </div>
-            <div className="flex flex-col items-center md:items-start">
-              <div className="w-14 h-14 bg-orange-100 text-orange-600 rounded-full flex items-center justify-center mb-4 mx-auto md:mx-0">
-                <Package size={28} />
-              </div>
-              <h3 className="font-bold text-xl mb-2">Erstelle ein Paket</h3>
-              <p className="text-sm text-slate-500 leading-relaxed">Beschreibe den Inhalt deiner Sendung. Mit 100% Community Trust.</p>
-            </div>
-            <div className="flex flex-col items-center md:items-start">
-              <div className="w-14 h-14 bg-green-100 text-green-600 rounded-full flex items-center justify-center mb-4 mx-auto md:mx-0">
-                <QrCode size={28} />
-              </div>
-              <h3 className="font-bold text-xl mb-2">Sichere Übergabe</h3>
-              <p className="text-sm text-slate-500 leading-relaxed">Digitaler Handshake und Tracking für maximale Sicherheit bei der Übergabe.</p>
-            </div>
-          </div>
         </div>
         </>
       )}
@@ -651,16 +914,69 @@ function HomeContent() {
                   {msg.type === 'booking_request' ? (
                     <div className={msg.sender_id === currentUserId ? "text-white" : "text-slate-900"}>
                       <div className="flex items-center gap-2 font-bold mb-2 border-b border-white/20 pb-1 uppercase text-xs tracking-wider"><Package size={14}/> Buchungsanfrage</div>
+                      {(() => {
+                        // WICHTIG: Extrahiere das Shipment korrekt (kann Array oder Objekt sein)
+                        const shipment = Array.isArray(msg.shipments) ? msg.shipments[0] : msg.shipments;
+                        
+                        // Zusätzliche Validierung: Prüfe ob trip_id übereinstimmt
+                        if (contextTripId && shipment && shipment.trip_id !== contextTripId) {
+                          console.warn("DEBUG: Falsches Shipment im Chat angezeigt:", {
+                            msgId: msg.id,
+                            shipmentTripId: shipment.trip_id,
+                            contextTripId: contextTripId
+                          });
+                          return (
+                            <div className="text-red-500 text-xs">
+                              ⚠️ Paket-Daten nicht verfügbar (falsche trip_id)
+                            </div>
+                          );
+                        }
+                        
+                        if (!shipment) {
+                          return (
+                            <div className="text-slate-400 text-xs">
+                              Paket-Daten nicht verfügbar
+                            </div>
+                          );
+                        }
+                        
+                        return (
+                          <>
                       <div className="flex gap-3 items-center">
-                        <div className="bg-white/20 w-10 h-10 rounded flex items-center justify-center font-bold text-lg">📦</div>
-                        <div><div className="font-bold text-base">{msg.shipments?.content_desc}</div><div className="text-xs opacity-80">{msg.shipments?.weight_kg} kg</div></div>
+                         <div className="bg-white/20 w-10 h-10 rounded flex items-center justify-center font-bold text-lg">📦</div>
+                              <div>
+                                <div className="font-bold text-base">{shipment.content_desc}</div>
+                                <div className="text-xs opacity-80">{shipment.weight_kg} kg</div>
+                              </div>
                       </div>
-                      {msg.sender_id !== currentUserId && msg.shipments?.status === 'pending' && (
-                        <button onClick={() => handleBookingAccept(msg)} className="w-full bg-green-500 text-white py-2 rounded-lg font-bold text-xs mt-3 hover:bg-green-600 shadow-lg">✅ Annehmen</button>
-                      )}
-                      {msg.shipments?.status === 'accepted' && (
-                        <div className="mt-2 bg-green-100 text-green-800 text-xs font-bold px-2 py-1 rounded flex items-center gap-1 border border-green-200"><CheckCircle size={12}/> Akzeptiert</div>
-                      )}
+                            {(() => {
+                              // WICHTIG: Zeige "Annehmen"-Button nur, wenn:
+                              // 1. Ich bin der Besitzer der Reise (currentUserId === shipment.trip.user_id)
+                              // 2. Der Status ist pending
+                              // 3. Die Nachricht wurde nicht von mir gesendet (optional, aber sicherheitshalber)
+                              const trip = shipment.trips || shipment.trip;
+                              const isTripOwner = trip && trip.user_id === currentUserId;
+                              const isPending = shipment.status === 'pending' || shipment.status?.toLowerCase() === 'pending';
+                              const isNotMyMessage = msg.sender_id !== currentUserId;
+                              
+                              if (isTripOwner && isPending && isNotMyMessage) {
+                                return (
+                                  <button 
+                                    onClick={() => handleBookingAccept(msg)} 
+                                    className="w-full bg-green-500 text-white py-2 rounded-lg font-bold text-xs mt-3 hover:bg-green-600 shadow-lg"
+                                  >
+                                    ✅ Annehmen
+                                  </button>
+                                );
+                              }
+                              return null;
+                            })()}
+                            {shipment.status === 'accepted' && (
+                              <div className="mt-2 bg-green-100 text-green-800 text-xs font-bold px-2 py-1 rounded flex items-center gap-1 border border-green-200"><CheckCircle size={12}/> Akzeptiert</div>
+                            )}
+                          </>
+                        );
+                      })()}
                     </div>
                   ) : (<p>{msg.content}</p>)}
                   <span className="text-[10px] opacity-60 block text-right mt-1">{new Date(msg.created_at).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</span>
@@ -676,7 +992,17 @@ function HomeContent() {
                   <div className="space-y-2 max-h-60 overflow-y-auto">
                     <button onClick={() => { setShowManifestModal(true); setShowBookingOptions(false); }} className="w-full p-3 border-2 border-dashed border-blue-300 bg-blue-50 rounded-lg text-blue-600 font-bold text-sm hover:bg-blue-100 flex items-center justify-center gap-2 transition"><Plus size={16}/> Neues Paket erstellen</button>
                     {myShipments.map(s => (
-                      <div key={s.id} onClick={() => sendMessage("Anfrage senden...", "booking_request", s.id)} className="p-3 border rounded-lg hover:bg-slate-50 cursor-pointer flex justify-between items-center transition group">
+                      <div key={s.id} onClick={async () => {
+                        // Wenn trip_id fehlt, aber contextTripId verfügbar ist, aktualisiere das Shipment
+                        if (contextTripId && !s.trip_id) {
+                          await supabase
+                            .from('shipments')
+                            .update({ trip_id: contextTripId })
+                            .eq('id', s.id);
+                          console.log("DEBUG: Shipment trip_id aktualisiert:", { shipmentId: s.id, trip_id: contextTripId });
+                        }
+                        sendMessage("Anfrage senden...", "booking_request", s.id);
+                      }} className="p-3 border rounded-lg hover:bg-slate-50 cursor-pointer flex justify-between items-center transition group">
                         <span className="font-bold text-sm text-slate-700 group-hover:text-blue-600">{s.content_desc}</span>
                         <div className="flex items-center gap-2"><span className="text-xs bg-slate-100 px-2 py-1 rounded font-bold">{s.weight_kg} kg</span><ArrowRight size={14} className="text-slate-300 group-hover:text-blue-500"/></div>
                       </div>

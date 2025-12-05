@@ -1,11 +1,13 @@
 "use client";
 
 import { createClient } from "@/utils/supabase/client";
-import { useEffect, useState, Suspense } from "react";
+import { useEffect, useState, Suspense, useMemo } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { Plane, Package, Settings, LogOut, Star, ArrowLeft, Trash2, Lock, Mail, ShieldAlert, Bell, CheckCircle, XCircle, Clock, MessageCircle, Menu, X, Luggage } from "lucide-react";
+import { Plane, Package, Settings, LogOut, Star, ArrowLeft, Trash2, Lock, Mail, ShieldAlert, Bell, CheckCircle, XCircle, Clock, MessageCircle, Menu, X, Luggage, QrCode, Camera } from "lucide-react";
 import { signOut } from "../auth/actions";
+import { QRCodeSVG } from "qrcode.react";
+import { BrowserQRCodeReader } from "@zxing/library";
 
 function DashboardContent() {
   const supabase = createClient();
@@ -32,6 +34,11 @@ function DashboardContent() {
   
   // Mobile Navigation
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  
+  // QR Code Scanner
+  const [showQRScanner, setShowQRScanner] = useState(false);
+  const [scanningShipmentId, setScanningShipmentId] = useState<string | null>(null);
+  const [scanResult, setScanResult] = useState<string | null>(null);
 
   useEffect(() => {
     const tab = searchParams.get('tab');
@@ -39,11 +46,59 @@ function DashboardContent() {
 
     async function loadData() {
       const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return; 
+      if (!user) {
+        console.log("DEBUG: Kein User gefunden, breche ab");
+        return;
+      }
       setUser(user);
+      console.log("DEBUG: User geladen:", { userId: user.id, email: user.email });
 
-      const { data: t } = await supabase.from("trips").select("*").eq("user_id", user.id);
-      if (t) setTrips(t);
+      // TRIPS FETCH - Aggressives Debugging
+      console.log("DEBUG: Starte Trip-Fetch...", { userId: user.id });
+      const { data: t, error: tripError } = await supabase
+        .from("trips")
+        .select("*")
+        .eq("user_id", user.id);
+      
+      console.log("DEBUG: Trip Fetch Ergebnis:", { 
+        tripData: t, 
+        tripError: tripError,
+        tripDataLength: t?.length,
+        tripDataType: typeof t,
+        isArray: Array.isArray(t),
+        isNull: t === null,
+        isUndefined: t === undefined
+      });
+      
+      if (tripError) {
+        console.error("DEBUG: Trip Fetch FEHLER:", tripError);
+        console.error("DEBUG: Fehler-Details:", {
+          message: tripError.message,
+          details: tripError.details,
+          hint: tripError.hint,
+          code: tripError.code
+        });
+      }
+      
+      if (t) {
+        console.log("DEBUG: Setze Trips in State:", { count: t.length, trips: t });
+        setTrips(t);
+        console.log("DEBUG: Trips State gesetzt");
+      } else {
+        console.warn("DEBUG: Trip Data ist null/undefined - KEINE TRIPS GELADEN!");
+        console.warn("DEBUG: Mögliche Ursachen:");
+        console.warn("  1. RLS Policies blockieren den Zugriff - Prüfe Supabase RLS Policies für 'trips' Tabelle");
+        console.warn("  2. Keine Trips vorhanden für diesen User");
+        console.warn("  3. Query-Fehler (siehe tripError oben)");
+        setTrips([]); // Explizit leeres Array setzen
+      }
+      
+      // WICHTIG: Falls trips leer ist ([]), aber kein Fehler kommt, 
+      // prüfe bitte die RLS (Row Level Security) Policies in Supabase:
+      // - Gehe zu Supabase Dashboard > Authentication > Policies
+      // - Prüfe die 'trips' Tabelle
+      // - Stelle sicher, dass SELECT für authenticated users erlaubt ist
+      // - Beispiel: CREATE POLICY "Users können eigene Trips lesen" ON trips FOR SELECT USING (auth.uid() = user_id);
 
       const { data: s } = await supabase.from("shipments").select("*").eq("user_id", user.id);
       if (s) setShipments(s);
@@ -56,24 +111,80 @@ function DashboardContent() {
         .order("created_at", { ascending: false });
       if (myReqs) setMyRequests(myReqs);
 
-      // Eingehende Anfragen: Booking-Requests für meine Trips
-      if (t && t.length > 0) {
-        const tripIds = t.map(tr => tr.id);
+      // Eingehende Anfragen: Two-Step-Fetch (robuster als !inner Join)
+      // Schritt 1: Hol dir erst die IDs meiner Reisen
+      if (!user || !user.id) {
+        console.warn("DEBUG: User nicht verfügbar für eingehende Anfragen");
+        setIncomingRequests([]);
+      } else {
+        const { data: myTrips, error: tripsError } = await supabase
+          .from('trips')
+          .select('id')
+          .eq('user_id', user.id);
         
-        // Lade alle booking_request messages mit shipments
-        const { data: allRequests } = await supabase
-          .from("messages")
-          .select("*, shipments(*, profiles:user_id(first_name))")
-          .eq("type", "booking_request")
-          .order("created_at", { ascending: false });
-        
-        if (allRequests) {
-          // Filtere nur die, die zu meinen Trips gehören
-          const filtered = allRequests.filter(msg => {
-            const shipment = msg.shipments;
-            return shipment && shipment.trip_id && tripIds.includes(shipment.trip_id);
-          });
-          setIncomingRequests(filtered);
+        if (tripsError) {
+          console.error("Fehler beim Laden meiner Reisen:", tripsError);
+          setIncomingRequests([]);
+        } else if (!myTrips || myTrips.length === 0) {
+          console.log("DEBUG: Keine Reisen gefunden -> Keine eingehenden Anfragen");
+          setIncomingRequests([]);
+        } else {
+          // Schritt 2: Hol dir alle Shipments, die zu diesen Trip-IDs gehören
+          const myTripIds = myTrips.map(t => t.id);
+          
+          const { data: shipments, error: shipmentsError } = await supabase
+            .from('shipments')
+            .select('*, trips(*)')  // Simpler Join, nur Trips
+            .in('trip_id', myTripIds)  // Der sichere Filter
+            .neq('status', 'cancelled')
+            .order('created_at', { ascending: false });
+          
+          if (shipmentsError) {
+            console.error("Fehler beim Laden der Shipments:", shipmentsError);
+            setIncomingRequests([]);
+          } else if (shipments && shipments.length > 0) {
+            // Schritt 3: Lade die zugehörigen booking_request Nachrichten
+            const shipmentIds = shipments.map((s: any) => s.id);
+            
+            const { data: bookingMessages, error: messagesError } = await supabase
+              .from("messages")
+              .select("*")
+              .eq("type", "booking_request")
+              .in("shipment_id", shipmentIds)
+              .order("created_at", { ascending: false });
+            
+            if (messagesError) {
+              console.error("Fehler beim Laden der booking_request Nachrichten:", messagesError);
+            }
+            
+            // Transformiere die Daten in das erwartete Format (messages mit shipments)
+            const transformed = shipments.map((shipment: any) => {
+              // Finde die zugehörige booking_request Nachricht
+              const message = bookingMessages?.find((m: any) => m.shipment_id === shipment.id);
+              
+              // Stelle sicher, dass trips als Objekt (nicht Array) vorliegt
+              const trip = Array.isArray(shipment.trips) ? shipment.trips[0] : shipment.trips;
+              
+              return {
+                id: message?.id || shipment.id,
+                conversation_id: message?.conversation_id,
+                sender_id: message?.sender_id || shipment.user_id,
+                content: message?.content || "Buchungsanfrage",
+                type: "booking_request",
+                created_at: message?.created_at || shipment.created_at,
+                shipments: {
+                  ...shipment,
+                  trips: trip
+                }
+              };
+            });
+            
+            console.log("DEBUG: Eingehende Anfragen geladen:", transformed.length, transformed);
+            setIncomingRequests(transformed);
+          } else {
+            console.log("DEBUG: Keine eingehenden Anfragen gefunden");
+            setIncomingRequests([]);
+          }
         }
       }
 
@@ -112,32 +223,55 @@ function DashboardContent() {
     const notifications: any[] = [];
     
     // Neue eingehende Anfragen (nur pending)
-    if (trips.length > 0) {
-      const tripIds = trips.map(t => t.id);
-      const { data: allRequests } = await supabase
+    // WICHTIG: Verwende den gleichen Two-Step-Fetch wie beim Laden der eingehenden Anfragen
+    if (!userId) {
+      return; // Kein User, keine Benachrichtigungen
+    }
+    
+    // Schritt 1: Hol dir erst die IDs meiner Reisen
+    const { data: myTrips } = await supabase
+      .from('trips')
+      .select('id')
+      .eq('user_id', userId);
+    
+    if (!myTrips || myTrips.length === 0) {
+      return; // Keine Reisen -> Keine Anfragen
+    }
+    
+    // Schritt 2: Hol dir alle pending Shipments, die zu diesen Trip-IDs gehören
+    const myTripIds = myTrips.map(t => t.id);
+    
+    const { data: shipments } = await supabase
+      .from('shipments')
+      .select('*, trips(*)')  // Simpler Join, nur Trips
+      .in('trip_id', myTripIds)  // Der sichere Filter
+      .eq('status', 'pending')  // Nur pending Anfragen
+      .neq('status', 'cancelled')  // Stornierte ausblenden
+      .order('created_at', { ascending: false })
+      .limit(10);
+    
+    if (shipments && shipments.length > 0) {
+      // Lade die zugehörigen booking_request Nachrichten
+      const shipmentIds = shipments.map((s: any) => s.id);
+      const { data: bookingMessages } = await supabase
         .from("messages")
-        .select("*, shipments(*, profiles:user_id(first_name))")
+        .select("*")
         .eq("type", "booking_request")
-        .order("created_at", { ascending: false })
-        .limit(10);
+        .in("shipment_id", shipmentIds);
       
-      if (allRequests) {
-        const newRequests = allRequests.filter(msg => {
-          const shipment = msg.shipments;
-          return shipment && shipment.trip_id && tripIds.includes(shipment.trip_id) && (shipment.status?.toLowerCase() || 'pending') === 'pending';
-        });
+      shipments.forEach((shipment: any) => {
+        const trip = Array.isArray(shipment.trips) ? shipment.trips[0] : shipment.trips;
+        const message = bookingMessages?.find((m: any) => m.shipment_id === shipment.id);
         
-        newRequests.forEach(msg => {
-          notifications.push({
-            id: msg.id,
-            type: 'new_request',
-            message: `Neue Anfrage für deine Reise`,
-            shipment: msg.shipments,
-            conversation_id: msg.conversation_id,
-            created_at: msg.created_at
-          });
+        notifications.push({
+          id: message?.id || shipment.id,
+          type: 'new_request',
+          message: `Neue Anfrage für ${trip?.origin || 'deine Reise'} → ${trip?.destination || ''}`,
+          shipment: shipment,
+          conversation_id: message?.conversation_id,
+          created_at: message?.created_at || shipment.created_at
         });
-      }
+      });
     }
     
     // Status-Änderungen meiner Anfragen (nur recent)
@@ -205,67 +339,8 @@ function DashboardContent() {
     window.location.reload();
   };
 
-  const handleToggleAcceptRequest = async (messageId: string, shipmentId: string, tripId: string, senderId: string, currentStatus: string) => {
-    // Case-insensitive Vergleich
-    const statusLower = (currentStatus || 'pending').toLowerCase();
-    const newStatus = statusLower === 'accepted' ? 'pending' : 'accepted';
-    
-    console.log('DEBUG handleToggleAcceptRequest:', { 
-      currentStatus, 
-      statusLower, 
-      newStatus 
-    });
-    
-    // Update Status optimistisch im State
-    setIncomingRequests(prev => prev.map(req => {
-      if (req.shipments?.id === shipmentId) {
-        return {
-          ...req,
-          shipments: {
-            ...req.shipments,
-            status: newStatus
-          }
-        };
-      }
-      return req;
-    }));
-    
-    // Update in Datenbank
-    await supabase.from('shipments').update({ 
-      status: newStatus, 
-      trip_id: newStatus === 'accepted' ? tripId : null 
-    }).eq('id', shipmentId);
-    
-    // Finde oder erstelle Conversation
-    const { data: existingConv } = await supabase
-      .from('conversations')
-      .select('id')
-      .or(`and(participant1_id.eq.${user.id},participant2_id.eq.${senderId}),and(participant1_id.eq.${senderId},participant2_id.eq.${user.id})`)
-      .single();
-    
-    let convId = existingConv?.id;
-    
-    if (!convId) {
-      const { data: newConv } = await supabase
-        .from('conversations')
-        .insert({ participant1_id: user.id, participant2_id: senderId })
-        .select()
-        .single();
-      if (newConv) convId = newConv.id;
-    }
-    
-    if (convId) {
-      const message = newStatus === 'accepted' 
-        ? "✅ Anfrage akzeptiert!" 
-        : "📦 Paket wieder aus dem Koffer genommen.";
-      await supabase.from('messages').insert({
-        conversation_id: convId,
-        sender_id: user.id,
-        content: message,
-        type: 'text'
-      });
-    }
-  };
+  // Diese Funktion wird nicht mehr verwendet - Toggle-Logik ist jetzt in RequestCard
+  // Behalten für Kompatibilität, falls noch irgendwo verwendet
 
   const handleRejectRequest = async (messageId: string, shipmentId: string, senderId: string) => {
     await supabase.from('shipments').update({ status: 'rejected', trip_id: null }).eq('id', shipmentId);
@@ -417,6 +492,103 @@ function DashboardContent() {
     window.location.href = `/?openChat=${conversationId}&partnerId=${partnerId}&partnerName=${encodeURIComponent(partnerName)}${tripId ? `&tripId=${tripId}` : ''}`;
   };
 
+  // QR Code Funktionen
+  const getDeliveryCode = (shipment: any): string => {
+    // Nutze delivery_code Feld falls vorhanden, sonst shipment.id
+    return shipment?.delivery_code || shipment?.id || '';
+  };
+
+  const handleScanQRCode = async (shipmentId: string, scannedCode: string) => {
+    // Finde das Shipment, um den delivery_code zu bekommen
+    const shipment = incomingRequests.find(req => req.shipments?.id === shipmentId)?.shipments;
+    const expectedCode = getDeliveryCode(shipment || { id: shipmentId });
+    
+    console.log('DEBUG SCAN:', { scannedCode, expectedCode, shipmentId });
+    
+    if (scannedCode === expectedCode || scannedCode === shipmentId) {
+      // Status auf DELIVERED setzen
+      const { error } = await supabase
+        .from('shipments')
+        .update({ status: 'delivered' })
+        .eq('id', shipmentId);
+      
+      if (!error) {
+        setScanResult('success');
+        // Update State optimistisch
+        setIncomingRequests(prev => prev.map(req => {
+          if (req.shipments?.id === shipmentId) {
+            return {
+              ...req,
+              shipments: {
+                ...req.shipments,
+                status: 'delivered'
+              }
+            };
+          }
+          return req;
+        }));
+        
+        // Schließe Scanner nach 2 Sekunden
+        setTimeout(() => {
+          setShowQRScanner(false);
+          setScanningShipmentId(null);
+          setScanResult(null);
+        }, 2000);
+      } else {
+        setScanResult('error');
+        console.error('Fehler beim Aktualisieren:', error);
+      }
+    } else {
+      setScanResult('invalid');
+      console.error('QR-Code stimmt nicht überein:', { scannedCode, expectedCode });
+    }
+  };
+
+  const startQRScanner = async (shipmentId: string) => {
+    setScanningShipmentId(shipmentId);
+    setShowQRScanner(true);
+    setScanResult(null);
+    
+    // Warte kurz, damit das Video-Element gerendert wird
+    setTimeout(async () => {
+      try {
+        const codeReader = new BrowserQRCodeReader();
+        const videoInputDevices = await codeReader.listVideoInputDevices();
+        
+        if (videoInputDevices.length === 0) {
+          alert('Keine Kamera gefunden. Bitte erlaube den Kamerazugriff.');
+          setShowQRScanner(false);
+          setScanningShipmentId(null);
+          return;
+        }
+        
+        // Nutze die erste verfügbare Kamera (oder die Rückkamera auf Mobile)
+        const selectedDeviceId = videoInputDevices.length > 1 
+          ? videoInputDevices.find(device => device.label.toLowerCase().includes('back') || device.label.toLowerCase().includes('rear'))?.deviceId || videoInputDevices[1].deviceId
+          : videoInputDevices[0].deviceId;
+        
+        const videoElement = document.getElementById('qr-scanner-video') as HTMLVideoElement;
+        if (videoElement) {
+          codeReader.decodeFromVideoDevice(selectedDeviceId, videoElement, (result, error) => {
+            if (result) {
+              const scannedCode = result.getText();
+              handleScanQRCode(shipmentId, scannedCode);
+              codeReader.reset();
+            }
+            if (error && error.name !== 'NotFoundException') {
+              console.error('Scan-Fehler:', error);
+            }
+          });
+        }
+      } catch (error) {
+        console.error('Fehler beim Starten des Scanners:', error);
+        alert('Fehler beim Starten der Kamera. Bitte erlaube den Kamerazugriff.');
+        setShowQRScanner(false);
+        setScanningShipmentId(null);
+      }
+    }, 100);
+  };
+
   if (loading) return <div className="min-h-screen bg-slate-50 flex items-center justify-center text-slate-900">Lade...</div>;
 
   return (
@@ -537,7 +709,7 @@ function DashboardContent() {
                           if (notif.type === 'new_request' && notif.shipment) {
                             // Öffne Chat
                             const partnerId = notif.shipment.user_id;
-                            const partnerName = notif.shipment.profiles?.first_name || "User";
+                            const partnerName = notif.shipment.sender_name || "User";
                             const convId = notif.conversation_id;
                             if (convId) {
                               openChat(convId, partnerId, partnerName, notif.shipment.trip_id);
@@ -569,6 +741,17 @@ function DashboardContent() {
         {activeTab === 'trips' && (
           <div className="space-y-4">
             <h1 className="text-2xl font-black mb-4">Meine Reisen</h1>
+            {/* DEBUG: State-Info */}
+            {(() => {
+              console.log("DEBUG RENDER: Trips Tab - State:", { 
+                tripsLength: trips.length, 
+                trips: trips,
+                tripsType: typeof trips,
+                isArray: Array.isArray(trips),
+                activeTab: activeTab
+              });
+              return null;
+            })()}
             {trips.length > 0 ? (
               trips.map(t => (
                 <div key={t.id} className="bg-white p-4 rounded-xl border border-slate-200 flex justify-between items-center shadow-sm">
@@ -594,69 +777,119 @@ function DashboardContent() {
                     <div className="space-y-4">
             <h1 className="text-2xl font-black mb-4">Meine Anfragen</h1>
             {myRequests.length > 0 ? (
-              myRequests.map(req => (
-                <div key={req.id} className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm hover:shadow-md transition">
-                  <div className="flex justify-between items-start">
-                    <div 
-                      className="flex-1 cursor-pointer"
-                      onClick={async () => {
-                        if (req.trip_id) {
-                          // Finde die Reise, um den Sherpa zu finden
-                          const { data: tripData } = await supabase.from("trips").select("user_id, sherpa_name").eq("id", req.trip_id).single();
-                          if (tripData) {
-                            // Finde oder erstelle Conversation
-                            const { data: existingConv } = await supabase
-                              .from('conversations')
-                              .select('id')
-                              .or(`and(participant1_id.eq.${user.id},participant2_id.eq.${tripData.user_id}),and(participant1_id.eq.${tripData.user_id},participant2_id.eq.${user.id})`)
-                              .single();
-                            
-                            let convId = existingConv?.id;
-                            if (!convId) {
-                              const { data: newConv } = await supabase
-                                .from('conversations')
-                                .insert({ participant1_id: user.id, participant2_id: tripData.user_id })
-                                .select()
-                                .single();
-                              if (newConv) convId = newConv.id;
+              myRequests.map(req => {
+                // RequestCard für "Meine Anfragen" mit lokalem State
+                const MyRequestCard = () => {
+                  const [localStatus, setLocalStatus] = useState<string>(req.status || 'pending');
+                  
+                  // Update localStatus wenn req.status sich ändert
+                  useEffect(() => {
+                    if (req.status) {
+                      setLocalStatus(req.status);
+                    }
+                  }, [req.status]);
+                  
+                  const statusLower = (localStatus || 'pending').toLowerCase();
+                  const showQRCode = statusLower === 'accepted' || statusLower === 'in_transit';
+                  
+                  return (
+                    <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm hover:shadow-md transition">
+                      <div className="flex justify-between items-start">
+                        <div 
+                          className="flex-1 cursor-pointer"
+                          onClick={async () => {
+                            if (req.trip_id) {
+                              // Finde die Reise, um den Sherpa zu finden
+                              const { data: tripData } = await supabase.from("trips").select("user_id, sherpa_name").eq("id", req.trip_id).single();
+                              if (tripData) {
+                                // Finde oder erstelle Conversation
+                                const { data: existingConv } = await supabase
+                                  .from('conversations')
+                                  .select('id')
+                                  .or(`and(participant1_id.eq.${user.id},participant2_id.eq.${tripData.user_id}),and(participant1_id.eq.${tripData.user_id},participant2_id.eq.${user.id})`)
+                                  .single();
+                                
+                                let convId = existingConv?.id;
+                                if (!convId) {
+                                  const { data: newConv } = await supabase
+                                    .from('conversations')
+                                    .insert({ participant1_id: user.id, participant2_id: tripData.user_id })
+                                    .select()
+                                    .single();
+                                  if (newConv) convId = newConv.id;
+                                }
+                                
+                                if (convId) {
+                                  openChat(convId, tripData.user_id, tripData.sherpa_name, req.trip_id);
+                                }
+                              }
                             }
-                            
-                            if (convId) {
-                              openChat(convId, tripData.user_id, tripData.sherpa_name, req.trip_id);
-                            }
-                          }
-                        }
-                      }}
-                    >
-                      <div className="font-bold text-lg mb-2">{req.content_desc}</div>
-                      <div className="flex items-center gap-3 text-xs text-slate-500 mb-2">
-                        <span>{req.weight_kg} kg</span>
-                        <span>·</span>
-                        <span>{req.value_eur}€</span>
-                        {req.trips && (
-                          <>
+                          }}
+                        >
+                          <div className="font-bold text-lg mb-2">{req.content_desc}</div>
+                          <div className="flex items-center gap-3 text-xs text-slate-500 mb-2">
+                            <span>{req.weight_kg} kg</span>
                             <span>·</span>
-                            <span>{req.trips.origin} ➔ {req.trips.destination}</span>
-                          </>
-                        )}
-                      </div>
-                      <div className="mt-2">
-                        {getStatusBadge(req.status)}
+                            <span>{req.value_eur}€</span>
+                            {req.trips && (
+                              <>
+                                <span>·</span>
+                                <span>{req.trips.origin} ➔ {req.trips.destination}</span>
+                              </>
+                            )}
+                          </div>
+                          <div className="mt-2">
+                            {getStatusBadge(localStatus)}
+                          </div>
+                          {/* Debug Info */}
+                          <div className="text-xs text-slate-400 mt-1">
+                            Status Debug: {localStatus} (DB: {req.status || 'N/A'})
+                          </div>
+                          
+                          {/* QR-Code für Absender: Zeige wenn accepted oder in_transit */}
+                          {showQRCode && (
+                            <div className="mt-4 p-4 bg-slate-50 rounded-xl border border-slate-200">
+                              <h3 className="font-bold text-sm mb-2 flex items-center gap-2">
+                                <QrCode size={16} className="text-orange-500"/> Abhol-Code für Empfänger
+                              </h3>
+                              <div className="flex flex-col sm:flex-row gap-4 items-start">
+                                <div className="bg-white p-3 rounded-lg border border-slate-200">
+                                  <QRCodeSVG 
+                                    value={getDeliveryCode(req)} 
+                                    size={120}
+                                    level="M"
+                                    includeMargin={true}
+                                  />
+                                </div>
+                                <div className="flex-1">
+                                  <p className="text-xs text-slate-600 mb-2">
+                                    Sende diesen QR-Code an deine Kontaktperson am Zielort. Der Sherpa muss ihn scannen, um das Paket zu übergeben.
+                                  </p>
+                                  <div className="bg-white p-2 rounded border border-slate-200 font-mono text-xs text-slate-700 break-all">
+                                    {getDeliveryCode(req)}
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                        <button 
+                          type="button"
+                          onClick={(e) => { 
+                            e.stopPropagation(); 
+                            deleteItem("shipments", req.id); 
+                          }} 
+                          className="p-2 hover:bg-red-50 text-red-400 rounded transition ml-4"
+                        >
+                          <Trash2 size={16}/>
+                        </button>
                       </div>
                     </div>
-                    <button 
-                      type="button"
-                      onClick={(e) => { 
-                        e.stopPropagation(); 
-                        deleteItem("shipments", req.id); 
-                      }} 
-                      className="p-2 hover:bg-red-50 text-red-400 rounded transition ml-4"
-                    >
-                      <Trash2 size={16}/>
-                    </button>
-                  </div>
-                </div>
-              ))
+                  );
+                };
+                
+                return <MyRequestCard key={req.id} />;
+              })
             ) : (
               <div className="bg-white p-8 rounded-xl border border-slate-200 text-center text-slate-400">
                 <Package size={48} className="mx-auto mb-4 opacity-50"/>
@@ -671,121 +904,217 @@ function DashboardContent() {
             <h1 className="text-2xl font-black mb-4">Eingehende Anfragen</h1>
             {incomingRequests.length > 0 ? (
               incomingRequests.map(req => {
-                const shipment = req.shipments;
-                const senderName = shipment?.profiles?.first_name || "User";
-                
-                // Debug-Logging
-                const currentStatus = shipment?.status || 'pending';
-                const statusLower = currentStatus?.toLowerCase() || 'pending';
-                const isAccepted = statusLower === 'accepted';
-                const isPending = statusLower === 'pending';
-                
-                console.log('DEBUG STATUS:', { 
-                  reqId: req.id, 
-                  shipmentId: shipment?.id,
-                  statusFromDB: currentStatus,
-                  statusLower: statusLower,
-                  isAccepted: isAccepted,
-                  isPending: isPending
-                });
-                
-                return (
-                  <div key={req.id} className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
-                    <div className="flex justify-between items-start mb-3">
-                      <div className="flex-1">
-                        <div className="font-bold text-lg mb-1">{shipment?.content_desc || "Anfrage"}</div>
-                        <div className="text-xs text-slate-500 mb-2">
-                          Von: {senderName} · {shipment?.weight_kg} kg · {shipment?.value_eur}€
-                        </div>
-                        <div className="mb-2">
-                          {getStatusBadge(currentStatus)}
+                // RequestCard Component mit lokalem State
+                const RequestCard = () => {
+                  const shipment = req.shipments;
+                  const senderName = shipment?.sender_name || "User";
+                  
+                  // Lokaler State für sofortige UI-Updates
+                  const [localStatus, setLocalStatus] = useState<string>(shipment?.status || 'pending');
+                  
+                  // Update localStatus wenn shipment.status sich ändert (von außen)
+                  useEffect(() => {
+                    if (shipment?.status) {
+                      setLocalStatus(shipment.status);
+                    }
+                  }, [shipment?.status]);
+                  
+                  const statusLower = (localStatus || 'pending').toLowerCase();
+                  const isAccepted = statusLower === 'accepted';
+                  const isPending = statusLower === 'pending';
+                  const isInTransit = statusLower === 'in_transit';
+                  
+                  const handleToggle = async () => {
+                    const tripId = shipment?.trip_id;
+                    const senderId = shipment?.user_id;
+                    
+                    if (!tripId || !senderId || !shipment?.id) {
+                      console.error('Missing required data:', { tripId, senderId, shipmentId: shipment?.id });
+                      return;
+                    }
+                    
+                    // 1. Optimistic Update ZUERST
+                    const nextStatus = isAccepted ? 'pending' : 'accepted';
+                    setLocalStatus(nextStatus);
+                    
+                    console.log('DEBUG TOGGLE:', { 
+                      currentStatus: localStatus, 
+                      nextStatus,
+                      isAccepted 
+                    });
+                    
+                    try {
+                      // 2. Dann DB Update
+                      const { error } = await supabase.from('shipments').update({ 
+                        status: nextStatus, 
+                        trip_id: nextStatus === 'accepted' ? tripId : null 
+                      }).eq('id', shipment.id);
+                      
+                      if (error) {
+                        console.error('DB Update Error:', error);
+                        // Rollback bei Fehler
+                        setLocalStatus(localStatus);
+                        alert('Fehler beim Aktualisieren. Bitte versuche es erneut.');
+                        return;
+                      }
+                      
+                      // 3. Update State optimistisch
+                      setIncomingRequests(prev => prev.map(r => {
+                        if (r.shipments?.id === shipment.id) {
+                          return {
+                            ...r,
+                            shipments: {
+                              ...r.shipments,
+                              status: nextStatus
+                            }
+                          };
+                        }
+                        return r;
+                      }));
+                      
+                      // 4. Chat Nachricht nur bei Success und accepted
+                      if (nextStatus === 'accepted') {
+                        // Finde oder erstelle Conversation
+                        const { data: existingConv } = await supabase
+                          .from('conversations')
+                          .select('id')
+                          .or(`and(participant1_id.eq.${user.id},participant2_id.eq.${senderId}),and(participant1_id.eq.${senderId},participant2_id.eq.${user.id})`)
+                          .single();
+                        
+                        let convId = existingConv?.id;
+                        if (!convId) {
+                          const { data: newConv } = await supabase
+                            .from('conversations')
+                            .insert({ participant1_id: user.id, participant2_id: senderId })
+                            .select()
+                            .single();
+                          if (newConv) convId = newConv.id;
+                        }
+                        
+                        if (convId) {
+                          await supabase.from('messages').insert({
+                            conversation_id: convId,
+                            sender_id: user.id,
+                            content: "✅ Anfrage akzeptiert!",
+                            type: 'text'
+                          });
+                        }
+                      }
+                    } catch (e) {
+                      console.error('Toggle Error:', e);
+                      // Rollback bei Fehler
+                      setLocalStatus(localStatus);
+                      alert('Fehler beim Aktualisieren. Bitte versuche es erneut.');
+                    }
+                  };
+                  
+                  return (
+                    <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+                      <div className="flex justify-between items-start mb-3">
+                        <div className="flex-1">
+                          <div className="font-bold text-lg mb-1">{shipment?.content_desc || "Anfrage"}</div>
+                          <div className="text-xs text-slate-500 mb-2">
+                            Von: {senderName} · {shipment?.weight_kg} kg · {shipment?.value_eur}€
+                          </div>
+                          <div className="mb-2">
+                            {getStatusBadge(localStatus)}
+                          </div>
+                          {/* Debug Info */}
+                          <div className="text-xs text-slate-400 mt-1">
+                            Status Debug: {localStatus} (DB: {shipment?.status || 'N/A'})
                             </div>
                         </div>
-                    </div>
-                    {/* Button Logik - KEIN statischer Text! */}
-                    <div className="flex gap-2 mt-3 flex-wrap">
-                      {/* Toggle Button: IMMER sichtbar */}
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          e.preventDefault();
-                          const tripId = shipment.trip_id;
-                          const senderId = shipment.user_id;
-                          const nextStatus = isAccepted ? 'pending' : 'accepted';
-                          
-                          console.log('DEBUG TOGGLE:', { 
-                            currentStatus, 
-                            statusLower, 
-                            isAccepted, 
-                            nextStatus 
-                          });
-                          
-                          if (tripId && senderId) {
-                            handleToggleAcceptRequest(req.id, shipment.id, tripId, senderId, currentStatus);
-                          }
-                        }}
-                        className={`flex-1 py-3 rounded-lg font-bold text-white flex items-center justify-center gap-2 transition-colors ${
-                          isAccepted 
-                            ? 'bg-orange-500 hover:bg-orange-600' 
-                            : 'bg-green-500 hover:bg-green-600'
-                        }`}
-                      >
-                        {/* Icon Toggle */}
-                        {isAccepted ? (
-                          <Luggage size={20} />
-                        ) : (
-                          <CheckCircle size={20} />
-                        )}
-                        
-                        {/* Text Toggle */}
-                        <span>
-                          {isAccepted ? 'Im Koffer verstaut' : 'Annehmen'}
-                        </span>
-                      </button>
-                      
-                      {/* Ablehnen Button: Nur sichtbar wenn pending */}
-                      {isPending && (
+                      </div>
+                      {/* Button Logik */}
+                      <div className="flex gap-2 mt-3 flex-wrap">
+                        {/* Toggle Button: IMMER sichtbar */}
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
                             e.preventDefault();
-                            const senderId = shipment.user_id;
-                            if (senderId) {
-                              handleRejectRequest(req.id, shipment.id, senderId);
+                            handleToggle();
+                          }}
+                          className={`flex-1 py-3 rounded-lg font-bold text-white flex items-center justify-center gap-2 transition-colors ${
+                            isAccepted 
+                              ? 'bg-orange-500 hover:bg-orange-600' 
+                              : 'bg-green-500 hover:bg-green-600'
+                          }`}
+                        >
+                          {isAccepted ? (
+                            <>
+                              <Luggage size={20} />
+                              <span>Im Koffer verstaut</span>
+                            </>
+                          ) : (
+                            <>
+                              <CheckCircle size={20} />
+                              <span>Annehmen</span>
+                            </>
+                          )}
+                        </button>
+                        
+                        {/* Ablehnen Button: Nur sichtbar wenn pending */}
+                        {isPending && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              e.preventDefault();
+                              const senderId = shipment?.user_id;
+                              if (senderId) {
+                                handleRejectRequest(req.id, shipment.id, senderId);
+                              }
+                            }}
+                            className="flex-1 bg-red-600 hover:bg-red-700 text-white font-bold py-3 rounded-lg text-sm transition flex items-center justify-center gap-2"
+                          >
+                            <XCircle size={20}/> Ablehnen
+                          </button>
+                        )}
+                        
+                        {/* QR Scanner Button für Sherpa: Nur wenn accepted oder in_transit */}
+                        {(isAccepted || isInTransit) && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              e.preventDefault();
+                              if (shipment?.id) {
+                                startQRScanner(shipment.id);
+                              }
+                            }}
+                            className="flex-1 bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 rounded-lg text-sm transition flex items-center justify-center gap-2"
+                          >
+                            <Camera size={20}/> Lieferung abschließen (Scan)
+                          </button>
+                        )}
+                        
+                        {/* Chat Button: Immer sichtbar */}
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            e.preventDefault();
+                            const partnerId = shipment?.user_id;
+                            const partnerName = senderName;
+                            const convId = req.conversation_id;
+                            if (convId) {
+                              openChat(convId, partnerId, partnerName, shipment?.trip_id);
+                            } else {
+                              // Erstelle Conversation falls nicht vorhanden
+                              supabase.from('conversations').insert({ participant1_id: user.id, participant2_id: partnerId }).select().single().then(({ data: newConv }) => {
+                                if (newConv) {
+                                  openChat(newConv.id, partnerId, partnerName, shipment?.trip_id);
+                                }
+                              });
                             }
                           }}
-                          className="flex-1 bg-red-600 hover:bg-red-700 text-white font-bold py-3 rounded-lg text-sm transition flex items-center justify-center gap-2"
+                          className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-lg text-sm transition flex items-center justify-center gap-2"
                         >
-                          <XCircle size={20}/> Ablehnen
+                          <MessageCircle size={20}/> Chat
                         </button>
-                      )}
-                      
-                      {/* Chat Button: Immer sichtbar */}
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          e.preventDefault();
-                          const partnerId = shipment.user_id;
-                          const partnerName = senderName;
-                          const convId = req.conversation_id;
-                          if (convId) {
-                            openChat(convId, partnerId, partnerName, shipment.trip_id);
-                          } else {
-                            // Erstelle Conversation falls nicht vorhanden
-                            supabase.from('conversations').insert({ participant1_id: user.id, participant2_id: partnerId }).select().single().then(({ data: newConv }) => {
-                              if (newConv) {
-                                openChat(newConv.id, partnerId, partnerName, shipment.trip_id);
-                              }
-                            });
-                          }
-                        }}
-                        className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-lg text-sm transition flex items-center justify-center gap-2"
-                      >
-                        <MessageCircle size={20}/> Chat
-                      </button>
+                        </div>
                     </div>
-                </div>
-                );
+                  );
+                };
+                
+                return <RequestCard key={req.id} />;
               })
             ) : (
               <div className="bg-white p-8 rounded-xl border border-slate-200 text-center text-slate-400">
@@ -980,6 +1309,68 @@ function DashboardContent() {
             </div>
          )}
       </main>
+      {/* QR Code Scanner Modal */}
+      {showQRScanner && scanningShipmentId && (
+        <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl p-6 max-w-md w-full">
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-xl font-black">QR-Code scannen</h2>
+              <button
+                onClick={() => {
+                  setShowQRScanner(false);
+                  setScanningShipmentId(null);
+                  setScanResult(null);
+                }}
+                className="p-2 hover:bg-slate-100 rounded-lg transition"
+              >
+                <X size={24} />
+              </button>
+            </div>
+            
+            {scanResult === 'success' ? (
+              <div className="text-center py-8">
+                <CheckCircle size={64} className="mx-auto mb-4 text-green-500" />
+                <h3 className="text-2xl font-bold text-green-600 mb-2">Erfolgreich zugestellt!</h3>
+                <p className="text-slate-600">Das Paket wurde erfolgreich übergeben.</p>
+              </div>
+            ) : scanResult === 'invalid' ? (
+              <div className="text-center py-8">
+                <XCircle size={64} className="mx-auto mb-4 text-red-500" />
+                <h3 className="text-xl font-bold text-red-600 mb-2">Ungültiger QR-Code</h3>
+                <p className="text-slate-600 mb-4">Der gescannte Code stimmt nicht überein.</p>
+                <button
+                  onClick={() => {
+                    setScanResult(null);
+                    if (scanningShipmentId) {
+                      startQRScanner(scanningShipmentId);
+                    }
+                  }}
+                  className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg"
+                >
+                  Erneut scannen
+                </button>
+              </div>
+            ) : (
+              <>
+                <div className="bg-slate-900 rounded-xl p-4 mb-4 relative overflow-hidden">
+                  <video
+                    id="qr-scanner-video"
+                    className="w-full h-auto rounded-lg"
+                    style={{ maxHeight: '400px' }}
+                  />
+                  <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
+                    <div className="border-4 border-orange-500 rounded-lg w-64 h-64"></div>
+                  </div>
+                </div>
+                <p className="text-sm text-slate-600 text-center">
+                  Richte die Kamera auf den QR-Code des Empfängers
+                </p>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }

@@ -7,9 +7,25 @@ export async function updateSession(request: NextRequest) {
     request,
   })
 
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+  // KRITISCH: Prüfe ob Umgebungsvariablen vorhanden sind
+  if (!supabaseUrl || !supabaseAnonKey) {
+    const missing = [];
+    if (!supabaseUrl) missing.push('NEXT_PUBLIC_SUPABASE_URL');
+    if (!supabaseAnonKey) missing.push('NEXT_PUBLIC_SUPABASE_ANON_KEY');
+    
+    console.error('🚨 KRITISCHER FEHLER: Supabase Umgebungsvariablen fehlen (Middleware)!');
+    console.error('Fehlende Variablen:', missing);
+    
+    // Im Middleware können wir nicht throwen, daher nur loggen
+    return supabaseResponse;
+  }
+
   const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    supabaseUrl,
+    supabaseAnonKey,
     {
       cookies: {
         getAll() {
