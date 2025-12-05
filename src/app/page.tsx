@@ -19,7 +19,17 @@ type Trip = {
 };
 
 type Shipment = {
-  id: string; content_desc: string; weight_kg: number; value_eur: number; status: string;
+  id: string; 
+  content_desc: string; 
+  weight_kg: number; 
+  value_eur: number; 
+  status: string;
+  trip_id?: string | null;  // UUID ist ein String, kann null sein
+  sender_name?: string | null;  // Name des Absenders
+  user_id?: string | null;  // ID des Absenders
+  delivery_code?: string | null;  // QR-Code für die Lieferung
+  created_at?: string;  // Zeitstempel
+  updated_at?: string;  // Zeitstempel
 };
 
 function HomeContent() {
@@ -248,7 +258,7 @@ function HomeContent() {
     if (error) {
         console.error("DB Error:", error.message);
         setTeaserTrips([]);
-      } else {
+    } else {
         if (data && data.length > 0) {
           setTeaserTrips(data.slice(0, 3) as any);
     } else {
@@ -947,7 +957,7 @@ function HomeContent() {
                               <div>
                                 <div className="font-bold text-base">{shipment.content_desc}</div>
                                 <div className="text-xs opacity-80">{shipment.weight_kg} kg</div>
-                              </div>
+                      </div>
                       </div>
                             {(() => {
                               // WICHTIG: Zeige "Annehmen"-Button nur, wenn:
