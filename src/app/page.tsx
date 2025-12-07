@@ -6,7 +6,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   Search, Plane, X, MessageCircle, User, Package, Calendar, 
-  Luggage, Info, CheckCircle, Plus, Flag, ArrowRight, Zap, QrCode
+  Luggage, Info, CheckCircle, Plus, Flag, ArrowRight, Zap, QrCode, ShieldAlert
 } from "lucide-react";
 import { analyzeContentRisk } from "./lib/compliance";
 import { getCountryForCity } from "./lib/locations";
@@ -31,6 +31,32 @@ type Shipment = {
   created_at?: string;  // Zeitstempel
   updated_at?: string;  // Zeitstempel
 };
+
+// Hilfsfunktion: Berechnet die verfügbare Kapazität
+function calculateRemainingCapacity(
+  tripCapacity: number,
+  shipments: Array<{ weight_kg: number; status: string; id?: string }>,
+  excludeShipmentId?: string // Optional: Paket-ID ausschließen (z.B. wenn Status noch PENDING)
+): number {
+  const maxCapacity = tripCapacity || 0;
+  
+  // Summiere Gewicht aller Pakete mit Status ACCEPTED, IN_TRANSIT oder DELIVERED
+  // WICHTIG: Schließe das aktuelle Paket aus, wenn excludeShipmentId gesetzt ist
+  const usedCapacity = shipments
+    .filter(s => {
+      const status = (s.status || '').toLowerCase();
+      const isActive = status === 'accepted' || status === 'in_transit' || status === 'delivered' || status === 'completed';
+      // Wenn excludeShipmentId gesetzt ist, schließe dieses Paket aus
+      if (excludeShipmentId && s.id === excludeShipmentId) {
+        return false;
+      }
+      return isActive;
+    })
+    .reduce((sum, s) => sum + (s.weight_kg || 0), 0);
+  
+  // Berechne Restkapazität (min 0)
+  return Math.max(0, maxCapacity - usedCapacity);
+}
 
 function HomeContent() {
   const supabase = createClient();
@@ -61,6 +87,7 @@ function HomeContent() {
   const [chatInput, setChatInput] = useState("");
   const [showBookingOptions, setShowBookingOptions] = useState(false);
   const [isChatLoading, setIsChatLoading] = useState(false);
+  const [capacityWarnings, setCapacityWarnings] = useState<Record<string, { remaining: number; exceeds: boolean }>>({});
 
   // Modals
   const [showManifestModal, setShowManifestModal] = useState(false);
@@ -375,7 +402,49 @@ function HomeContent() {
       }
       
       setChatMessages(filteredData);
-        setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
+      
+      // Berechne Kapazitäts-Warnungen für alle booking_request Nachrichten
+      if (currentUserId) {
+        const warnings: Record<string, { remaining: number; exceeds: boolean }> = {};
+        
+        Promise.all(
+          filteredData.map(async (msg) => {
+            if (msg.type === 'booking_request' && msg.shipments) {
+              const shipment = Array.isArray(msg.shipments) ? msg.shipments[0] : msg.shipments;
+              const trip = shipment?.trips || shipment?.trip;
+              const statusLower = (shipment?.status || 'pending').toLowerCase();
+              const isPending = statusLower === 'pending';
+              const isTripOwner = trip && trip.user_id === currentUserId;
+              
+              if (isTripOwner && isPending && shipment?.trip_id && shipment?.id) {
+                // Lade alle shipments für diesen Trip
+                const { data: allShipments } = await supabase
+                  .from("shipments")
+                  .select("id, weight_kg, status")
+                  .eq("trip_id", shipment.trip_id);
+                
+                if (allShipments && trip.capacity_kg) {
+                  // Berechne verfügbare Kapazität (schließe aktuelles Paket aus, da Status PENDING)
+                  const remaining = calculateRemainingCapacity(
+                    trip.capacity_kg,
+                    allShipments,
+                    shipment.id
+                  );
+                  const packageWeight = shipment.weight_kg || 0;
+                  warnings[msg.id] = {
+                    remaining,
+                    exceeds: packageWeight > remaining
+                  };
+                }
+              }
+            }
+          })
+        ).then(() => {
+          setCapacityWarnings(warnings);
+        });
+      }
+      
+      setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
     }
   }
 
@@ -996,14 +1065,35 @@ function HomeContent() {
                               const isTripOwner = trip && trip.user_id === currentUserId;
                               const isNotMyMessage = msg.sender_id !== currentUserId;
                               
+                              // Hole Warnung aus State (wird von useEffect berechnet)
+                              const capacityWarning = capacityWarnings[msg.id];
+                              
                               if (isTripOwner && isPending && isNotMyMessage) {
                                 return (
-                                  <button 
-                                    onClick={() => handleBookingAccept(msg)} 
-                                    className="w-full bg-green-500 text-white py-2 rounded-lg font-bold text-xs mt-3 hover:bg-green-600 shadow-lg"
-                                  >
-                                    ✅ Annehmen
-                                  </button>
+                                  <>
+                                    {/* Warnung bei Überkapazität */}
+                                    {capacityWarning?.exceeds && (
+                                      <div className="mb-3 p-3 bg-red-100 border-2 border-red-500 rounded-lg">
+                                        <div className="flex items-start gap-2">
+                                          <ShieldAlert size={16} className="text-red-600 flex-shrink-0 mt-0.5" />
+                                          <div className="flex-1">
+                                            <p className="font-bold text-red-700 text-xs mb-1">
+                                              ⚠️ Achtung: Kapazität überschritten
+                                            </p>
+                                            <p className="text-[10px] text-red-600">
+                                              Dieses Paket ({shipment.weight_kg} kg) überschreitet deine freie Kapazität ({capacityWarning.remaining} kg).
+                                            </p>
+                                          </div>
+                                        </div>
+                                      </div>
+                                    )}
+                                    <button 
+                                      onClick={() => handleBookingAccept(msg)} 
+                                      className="w-full bg-green-500 text-white py-2 rounded-lg font-bold text-xs mt-3 hover:bg-green-600 shadow-lg"
+                                    >
+                                      ✅ Annehmen
+                                    </button>
+                                  </>
                                 );
                               }
                               return null;

@@ -13,7 +13,27 @@ type Trip = {
   id: string; user_id: string; origin: string; destination: string; date: string;
   capacity_kg: number; sherpa_name: string; description?: string; price_eur?: number;
   origin_country?: string; destination_country?: string;
+  shipments?: Array<{ weight_kg: number; status: string }>;
 };
+
+// Hilfsfunktion: Berechnet die verfügbare Kapazität
+function calculateRemainingCapacity(trip: Trip, acceptedShipments?: Array<{ weight_kg: number; status: string }>): number {
+  const maxCapacity = trip.capacity_kg || 0;
+  
+  // Verwende übergebene shipments oder die aus dem trip
+  const shipments = acceptedShipments || trip.shipments || [];
+  
+  // Summiere Gewicht aller Pakete mit Status ACCEPTED, IN_TRANSIT oder DELIVERED
+  const usedCapacity = shipments
+    .filter(s => {
+      const status = (s.status || '').toLowerCase();
+      return status === 'accepted' || status === 'in_transit' || status === 'delivered' || status === 'completed';
+    })
+    .reduce((sum, s) => sum + (s.weight_kg || 0), 0);
+  
+  // Berechne Restkapazität (min 0)
+  return Math.max(0, maxCapacity - usedCapacity);
+}
 
 function SearchResultsContent() {
   const supabase = createClient();
@@ -64,8 +84,24 @@ function SearchResultsContent() {
       if (error) {
         console.error("DB Error:", error.message);
         setTrips([]);
+      } else if (data) {
+        // Lade für jede Reise die zugehörigen shipments
+        const tripsWithShipments = await Promise.all(
+          data.map(async (trip: any) => {
+            const { data: shipments } = await supabase
+              .from("shipments")
+              .select("weight_kg, status")
+              .eq("trip_id", trip.id);
+            
+            return {
+              ...trip,
+              shipments: shipments || []
+            };
+          })
+        );
+        setTrips(tripsWithShipments as any);
       } else {
-        setTrips(data as any || []);
+        setTrips([]);
       }
     } catch (err) {
       console.error("Fehler:", err);
@@ -97,7 +133,21 @@ function SearchResultsContent() {
       }
 
       if (exactData && exactData.length > 0) {
-        setTrips(exactData as any);
+        // Lade für jede Reise die zugehörigen shipments
+        const tripsWithShipments = await Promise.all(
+          exactData.map(async (trip: any) => {
+            const { data: shipments } = await supabase
+              .from("shipments")
+              .select("weight_kg, status")
+              .eq("trip_id", trip.id);
+            
+            return {
+              ...trip,
+              shipments: shipments || []
+            };
+          })
+        );
+        setTrips(tripsWithShipments as any);
         setLoading(false);
         return;
       }
@@ -119,7 +169,21 @@ function SearchResultsContent() {
         const { data: countryData, error: countryError } = await countryQuery;
         
         if (!countryError && countryData && countryData.length > 0) {
-          setTrips(countryData as any);
+          // Lade für jede Reise die zugehörigen shipments
+          const tripsWithShipments = await Promise.all(
+            countryData.map(async (trip: any) => {
+              const { data: shipments } = await supabase
+                .from("shipments")
+                .select("weight_kg, status")
+                .eq("trip_id", trip.id);
+              
+              return {
+                ...trip,
+                shipments: shipments || []
+              };
+            })
+          );
+          setTrips(tripsWithShipments as any);
           setLoading(false);
           return;
         }
@@ -179,9 +243,9 @@ function SearchResultsContent() {
       </nav>
 
       {/* STICKY SEARCH BAR */}
-      <div className="bg-white border-b border-slate-200 sticky top-16 z-30 shadow-sm">
-        <div className="max-w-4xl mx-auto px-4 py-3">
-          <div className="flex gap-2">
+      <div className="bg-white border-b border-slate-200 sticky top-16 z-30 shadow-sm w-full max-w-full overflow-x-hidden">
+        <div className="max-w-4xl mx-auto px-2 sm:px-4 py-2 sm:py-3 w-full">
+          <div className="flex flex-col sm:flex-row gap-2 w-full">
             <input 
               list="airport-cities" 
               value={searchFrom} 
@@ -190,7 +254,7 @@ function SearchResultsContent() {
               onFocus={(e) => e.target.focus()}
               onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
               placeholder="Von" 
-              className="flex-1 bg-slate-100 rounded-lg px-3 py-2 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-orange-500" 
+              className="w-full sm:flex-1 bg-slate-100 rounded-lg px-3 py-2 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-orange-500 min-w-0 flex-shrink-0" 
             />
             <input 
               list="airport-cities" 
@@ -200,11 +264,11 @@ function SearchResultsContent() {
               onFocus={(e) => e.target.focus()}
               onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
               placeholder="Nach" 
-              className="flex-1 bg-slate-100 rounded-lg px-3 py-2 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-orange-500" 
+              className="w-full sm:flex-1 bg-slate-100 rounded-lg px-3 py-2 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-orange-500 min-w-0 flex-shrink-0" 
             />
             <button 
               onClick={handleSearch} 
-              className="bg-orange-500 hover:bg-orange-600 text-white font-bold px-6 py-2 rounded-lg text-sm transition flex items-center gap-2"
+              className="w-full sm:w-auto sm:flex-shrink-0 bg-orange-500 hover:bg-orange-600 text-white font-bold px-4 sm:px-6 py-2 rounded-lg text-sm transition flex items-center justify-center gap-2 min-h-[44px]"
             >
               <Search size={18}/> Suchen
             </button>
@@ -245,7 +309,20 @@ function SearchResultsContent() {
                       onClick={(e) => e.stopPropagation()}
                     >
                       <div className="flex flex-col items-end"><span className="text-lg font-bold text-slate-900">Preis: VB</span><span className="text-xs text-slate-400">im Chat</span></div>
-                      <div className="bg-slate-100 text-slate-600 px-3 py-1 rounded-lg text-sm font-bold flex items-center gap-1"><Luggage size={14}/> {trip.capacity_kg} kg</div>
+                      {(() => {
+                        const remaining = calculateRemainingCapacity(trip);
+                        const isFull = remaining === 0;
+                        return (
+                          <div className={`px-3 py-1 rounded-lg text-sm font-bold flex items-center gap-1 ${
+                            isFull 
+                              ? 'bg-red-100 text-red-700 border border-red-300' 
+                              : 'bg-slate-100 text-slate-600'
+                          }`}>
+                            <Luggage size={14}/> 
+                            {isFull ? 'Ausgebucht' : `Noch ${remaining} kg frei`}
+                          </div>
+                        );
+                      })()}
                     </div>
                   </div>
                 ))}

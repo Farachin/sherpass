@@ -9,6 +9,32 @@ import { signOut } from "../auth/actions";
 import { QRCodeSVG } from "qrcode.react";
 import { BrowserQRCodeReader } from "@zxing/library";
 
+// Hilfsfunktion: Berechnet die verfügbare Kapazität
+function calculateRemainingCapacity(
+  tripCapacity: number,
+  shipments: Array<{ weight_kg: number; status: string }>,
+  excludeShipmentId?: string // Optional: Paket-ID ausschließen (z.B. wenn Status noch PENDING)
+): number {
+  const maxCapacity = tripCapacity || 0;
+  
+  // Summiere Gewicht aller Pakete mit Status ACCEPTED, IN_TRANSIT oder DELIVERED
+  // WICHTIG: Schließe das aktuelle Paket aus, wenn excludeShipmentId gesetzt ist
+  const usedCapacity = shipments
+    .filter(s => {
+      const status = (s.status || '').toLowerCase();
+      const isActive = status === 'accepted' || status === 'in_transit' || status === 'delivered' || status === 'completed';
+      // Wenn excludeShipmentId gesetzt ist, schließe dieses Paket aus
+      if (excludeShipmentId && (s as any).id === excludeShipmentId) {
+        return false;
+      }
+      return isActive;
+    })
+    .reduce((sum, s) => sum + (s.weight_kg || 0), 0);
+  
+  // Berechne Restkapazität (min 0)
+  return Math.max(0, maxCapacity - usedCapacity);
+}
+
 function DashboardContent() {
   const supabase = createClient();
   const searchParams = useSearchParams();
@@ -917,9 +943,36 @@ function DashboardContent() {
                 const RequestCard = () => {
                   const shipment = req.shipments;
                   const senderName = shipment?.sender_name || "User";
+                  const trip = shipment?.trips || shipment?.trip;
                   
                   // Lokaler State für sofortige UI-Updates
                   const [localStatus, setLocalStatus] = useState<string>(shipment?.status || 'pending');
+                  const [tripShipments, setTripShipments] = useState<Array<{ weight_kg: number; status: string; id?: string }>>([]);
+                  const [remainingCapacity, setRemainingCapacity] = useState<number | null>(null);
+                  
+                  // Lade alle shipments für diesen Trip, um die verfügbare Kapazität zu berechnen
+                  useEffect(() => {
+                    if (shipment?.trip_id && trip) {
+                      supabase
+                        .from("shipments")
+                        .select("id, weight_kg, status")
+                        .eq("trip_id", shipment.trip_id)
+                        .then(({ data }) => {
+                          if (data) {
+                            setTripShipments(data);
+                            // Berechne verfügbare Kapazität
+                            // WICHTIG: Wenn Status PENDING ist, schließe das aktuelle Paket aus
+                            const excludeId = isPending ? shipment.id : undefined;
+                            const remaining = calculateRemainingCapacity(
+                              trip.capacity_kg || 0,
+                              data,
+                              excludeId
+                            );
+                            setRemainingCapacity(remaining);
+                          }
+                        });
+                    }
+                  }, [shipment?.trip_id, shipment?.id, shipment?.status]);
                   
                   // Update localStatus wenn shipment.status sich ändert (von außen)
                   useEffect(() => {
@@ -933,6 +986,10 @@ function DashboardContent() {
                   const isPending = statusLower === 'pending';
                   const isInTransit = statusLower === 'in_transit';
                   const isDelivered = statusLower === 'delivered' || statusLower === 'completed';
+                  
+                  // Prüfe, ob das Paket zu schwer ist (nur wenn pending)
+                  const packageWeight = shipment?.weight_kg || 0;
+                  const exceedsCapacity = isPending && remainingCapacity !== null && packageWeight > remainingCapacity;
                   
                   const handleToggle = async () => {
                     const tripId = shipment?.trip_id;
@@ -1041,6 +1098,24 @@ function DashboardContent() {
                             </div>
                         </div>
                       </div>
+                      
+                      {/* Warnung bei Überkapazität */}
+                      {exceedsCapacity && (
+                        <div className="mb-3 p-3 bg-red-100 border-2 border-red-500 rounded-lg">
+                          <div className="flex items-start gap-2">
+                            <ShieldAlert size={20} className="text-red-600 flex-shrink-0 mt-0.5" />
+                            <div className="flex-1">
+                              <p className="font-bold text-red-700 text-sm mb-1">
+                                ⚠️ Achtung: Kapazität überschritten
+                              </p>
+                              <p className="text-xs text-red-600">
+                                Dieses Paket ({packageWeight} kg) überschreitet deine freie Kapazität ({remainingCapacity} kg).
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                      
                       {/* Button Logik */}
                       {isDelivered ? (
                         // Status-Badge für erfolgreich übergebene Pakete
