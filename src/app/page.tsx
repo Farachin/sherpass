@@ -372,7 +372,7 @@ function HomeContent() {
         
         setChatMessages(processedData);
         setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
-      }
+    }
       return;
     }
     
@@ -737,7 +737,7 @@ function HomeContent() {
       `}</style>
 
       {/* NAVBAR */}
-      <nav className="bg-white border-b border-slate-200 sticky top-0 z-40 h-16 flex items-center justify-between px-2 sm:px-4 lg:px-8 overflow-x-hidden max-w-full">
+      <nav className="bg-white border-b border-slate-200 h-16 flex items-center justify-between px-2 sm:px-4 lg:px-8 overflow-x-hidden max-w-full">
         <Link href="/" className="flex items-center gap-1 sm:gap-2 cursor-pointer flex-shrink-0 min-w-0">
           <Plane className="text-orange-500 flex-shrink-0" /> <span className="font-black text-lg sm:text-xl tracking-tighter truncate">SHERPASS</span>
         </Link>
@@ -762,8 +762,9 @@ function HomeContent() {
 
       {/* STICKY SEARCH */}
       {scrolled && (
-        <div className="bg-white border-b border-slate-200 p-2 sm:p-3 fixed top-16 left-0 w-full z-30 shadow-md animate-in slide-in-from-top-5 overflow-x-hidden max-w-full">
-          <div className="max-w-4xl mx-auto flex gap-1 sm:gap-2 px-2 sm:px-0">
+        <div className="bg-white border-b border-slate-200 sticky top-0 left-0 right-0 w-full z-30 shadow-md overflow-x-hidden max-w-full">
+          <div className="p-2 sm:p-3">
+            <div className="max-w-4xl mx-auto flex gap-1 sm:gap-2 px-2 sm:px-0">
             <input 
               list="airport-cities" 
               value={searchFrom} 
@@ -792,6 +793,7 @@ function HomeContent() {
                 <Search size={18} />
               </span>
             </button>
+            </div>
           </div>
         </div>
       )}
