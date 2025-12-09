@@ -49,7 +49,9 @@ export function IncomingRequestCard({
 }: IncomingRequestCardProps) {
   const shipment = request.shipments;
   const senderName = shipment?.sender_name || "User";
-  const trip = shipment?.trips;
+  const trip = Array.isArray(shipment?.trips)
+    ? shipment.trips[0]
+    : shipment?.trips;
 
   const [localStatus, setLocalStatus] = useState<ShipmentStatus>(
     shipment?.status || "pending",
@@ -132,8 +134,12 @@ export function IncomingRequestCard({
     const partnerName = senderName;
     const convId = request.conversation_id;
 
+    if (!partnerId) return;
+
+    const tripId = shipment?.trip_id || undefined;
+
     if (convId) {
-      onOpenChat(convId, partnerId, partnerName, shipment?.trip_id);
+      onOpenChat(convId, partnerId, partnerName, tripId);
     } else {
       const { data: newConv } = await supabase
         .from("conversations")
@@ -141,7 +147,7 @@ export function IncomingRequestCard({
         .select()
         .single();
       if (newConv) {
-        onOpenChat(newConv.id, partnerId, partnerName, shipment?.trip_id);
+        onOpenChat(newConv.id, partnerId, partnerName, tripId);
       }
     }
   };

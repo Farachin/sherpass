@@ -97,7 +97,9 @@ export function MyRequestCard({
               <>
                 <span>·</span>
                 <span>
-                  {request.trips.origin} ➔ {request.trips.destination}
+                  {Array.isArray(request.trips)
+                    ? `${request.trips[0]?.origin} ➔ ${request.trips[0]?.destination}`
+                    : `${request.trips.origin} ➔ ${request.trips.destination}`}
                 </span>
               </>
             )}
