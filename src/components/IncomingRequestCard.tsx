@@ -73,9 +73,9 @@ export function IncomingRequestCard({
               weight_kg: number;
               status: ShipmentStatus;
               id: string;
-            }> = data.map((s: Shipment) => ({
+            }> = (data as Array<{ id: string; weight_kg: number; status: string }>).map((s) => ({
               weight_kg: s.weight_kg,
-              status: s.status,
+              status: s.status as ShipmentStatus,
               id: s.id,
             }));
             setTripShipments(typedData);
