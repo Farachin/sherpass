@@ -27,12 +27,15 @@ body {
 
 @layer base {
   /* Verhindert Auto-Zoom auf iOS */
-  input, textarea, select {
+  input,
+  textarea,
+  select {
     font-size: 16px !important;
   }
-  
+
   /* Verhindert das seitliche "Wackeln" auf Mobile */
-  html, body {
+  html,
+  body {
     overflow-x: hidden;
     touch-action: pan-x pan-y;
   }

@@ -14,7 +14,7 @@ export async function GET(request: Request) {
   if (code) {
     const supabase = await createClient();
     const { error } = await supabase.auth.exchangeCodeForSession(code);
-    
+
     if (!error) {
       console.log("LOGIN ERFOLGREICH! Weiterleitung...");
       return NextResponse.redirect(`${origin}${next}`);
