@@ -488,7 +488,9 @@ function HomeContent() {
               const shipment = Array.isArray(msg.shipments)
                 ? msg.shipments[0]
                 : msg.shipments;
-              const trip = shipment?.trips || shipment?.trip;
+              const trip = Array.isArray(shipment?.trips)
+                ? shipment.trips[0]
+                : shipment?.trips;
               const statusLower = (shipment?.status || "pending").toLowerCase();
               const isPending = statusLower === "pending";
               const isTripOwner = trip && trip.user_id === currentUserId;

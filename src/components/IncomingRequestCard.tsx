@@ -49,7 +49,7 @@ export function IncomingRequestCard({
 }: IncomingRequestCardProps) {
   const shipment = request.shipments;
   const senderName = shipment?.sender_name || "User";
-  const trip = shipment?.trips || shipment?.trip;
+  const trip = shipment?.trips;
 
   const [localStatus, setLocalStatus] = useState<ShipmentStatus>(
     shipment?.status || "pending",
