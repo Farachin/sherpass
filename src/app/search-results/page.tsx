@@ -248,7 +248,7 @@ function SearchResultsContent() {
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 font-sans">
       {/* NAVBAR */}
-      <nav className="bg-white border-b border-slate-200 sticky top-0 z-50 h-16 flex items-center justify-between px-4 lg:px-8">
+      <nav className="bg-white border-b border-slate-200 h-16 flex items-center justify-between px-4 lg:px-8">
         <Link href="/" className="flex items-center gap-2 cursor-pointer">
           <Plane className="text-orange-500" />{" "}
           <span className="font-black text-xl tracking-tighter">SHERPASS</span>
@@ -272,8 +272,8 @@ function SearchResultsContent() {
         </div>
       </nav>
 
-      {/* STICKY SEARCH BAR */}
-      <div className="bg-white border-b border-slate-200 sticky top-16 z-40 shadow-sm w-full max-w-full overflow-x-hidden">
+      {/* SEARCH BAR */}
+      <div className="bg-white border-b border-slate-200 shadow-sm w-full max-w-full overflow-x-hidden">
         <div className="max-w-4xl mx-auto px-2 sm:px-4 py-2 sm:py-3 w-full">
           <div className="flex flex-col sm:flex-row gap-2 w-full">
             <input

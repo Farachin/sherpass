@@ -78,7 +78,6 @@ function HomeContent() {
   // --- STATE ---
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
-  const [scrolled, setScrolled] = useState(false);
 
   // Navigation & Data
   const [teaserTrips, setTeaserTrips] = useState<Trip[]>([]);
@@ -134,9 +133,6 @@ function HomeContent() {
     };
     initData();
 
-    const handleScroll = () => setScrolled(window.scrollY > 400);
-    window.addEventListener("scroll", handleScroll);
-
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_, session) => {
@@ -147,7 +143,6 @@ function HomeContent() {
 
     return () => {
       subscription.unsubscribe();
-      window.removeEventListener("scroll", handleScroll);
     };
   }, []);
 
@@ -941,43 +936,6 @@ function HomeContent() {
         </div>
       </nav>
 
-      {/* STICKY SEARCH */}
-      {scrolled && (
-        <div className="bg-white border-b border-slate-200 sticky top-0 left-0 right-0 w-full z-30 shadow-md overflow-x-hidden max-w-full">
-          <div className="p-2 sm:p-3">
-            <div className="max-w-4xl mx-auto flex gap-1 sm:gap-2 px-2 sm:px-0">
-              <input
-                list="airport-cities"
-                value={searchFrom}
-                onChange={(e) => setSearchFrom(e.target.value)}
-                onClick={(e) => e.stopPropagation()}
-                onFocus={(e) => e.target.focus()}
-                placeholder="Von"
-                className="flex-1 min-w-0 bg-slate-100 rounded-lg px-2 sm:px-3 py-2 text-xs sm:text-sm font-bold"
-              />
-              <input
-                list="airport-cities"
-                value={searchTo}
-                onChange={(e) => setSearchTo(e.target.value)}
-                onClick={(e) => e.stopPropagation()}
-                onFocus={(e) => e.target.focus()}
-                placeholder="Nach"
-                className="flex-1 min-w-0 bg-slate-100 rounded-lg px-2 sm:px-3 py-2 text-xs sm:text-sm font-bold"
-              />
-              <button
-                onClick={performSearch}
-                className="bg-blue-500 hover:bg-blue-600 text-white font-bold rounded-lg text-sm flex items-center justify-center flex-shrink-0 transition"
-                style={{ minWidth: "44px" }}
-              >
-                <span className="hidden sm:inline px-3 py-2">Suchen</span>
-                <span className="sm:hidden p-2">
-                  <Search size={18} />
-                </span>
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {
         <>
